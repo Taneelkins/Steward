@@ -32,7 +32,8 @@ type LogStage =
   | "appeal_type"
   | "appeal_result"
   | "confirm"
-  | "fields";
+  | "fields"
+  | "submitting";
 
 type LogDraft = {
   id: string;
@@ -833,6 +834,7 @@ function saveModalFields(draft: LogDraft, modalType: string, interaction: ModalS
 }
 
 async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draft: LogDraft) {
+  draft.stage = "submitting";
   if (draft.editCaseId) {
     await resubmitEditedDraft(db, interaction, draft);
     return;
