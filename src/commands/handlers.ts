@@ -472,6 +472,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     approval_channel_id: getTextChannelOption(interaction, "approval_channel")?.id,
     junior_help_channel_id: getTextChannelOption(interaction, "junior_help")?.id,
     evidence_archive_channel_id: getTextChannelOption(interaction, "evidence_archive")?.id,
+    steward_log_channel_id: getTextChannelOption(interaction, "steward_log")?.id,
     owner_user_id: interaction.options.getUser("owner")?.id,
     ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined
   };
@@ -1255,7 +1256,8 @@ function readSetupChannelOverrides(interaction: ChatInputCommandInteraction): Pa
     logRestore: getTextChannelOption(interaction, "logrestore_channel"),
     logDiscord: getTextChannelOption(interaction, "logdiscord_channel"),
     logTicket: getTextChannelOption(interaction, "logticket_channel"),
-    logAppeal: getTextChannelOption(interaction, "logappeal_channel")
+    logAppeal: getTextChannelOption(interaction, "logappeal_channel"),
+    stewardLog: null
   };
 }
 
@@ -1296,7 +1298,8 @@ function saveProvisionedConfig(db: AppDatabase, guildId: string, provisioned: Pr
     registration_role_id: provisioned.canRegisterRole.id,
     audit_channel_id: provisioned.channels.auditLog.id,
     alert_channel_id: provisioned.channels.modAlerts.id,
-    appeal_log_channel_id: provisioned.channels.logAppeal.id
+    appeal_log_channel_id: provisioned.channels.logAppeal.id,
+    steward_log_channel_id: provisioned.channels.stewardLog.id
   });
   db.replaceStaffRoles(
     guildId,
@@ -1341,7 +1344,8 @@ function savedChannelIdsFromConfig(db: AppDatabase, guildId: string): Partial<Re
     quota: config.quotaChannelId,
     auditLog: config.auditChannelId,
     modAlerts: config.alertChannelId,
-    staffRegistration: config.staffRegistrationChannelId
+    staffRegistration: config.staffRegistrationChannelId,
+    stewardLog: config.stewardLogChannelId
   };
 }
 

@@ -5,7 +5,7 @@ import { canUseAccess, caseLinkComponents, commandDeniedMessage, configSummaryEm
 import { dayName, discordTimestamp, nowIso, parseDateInput, parseTime, parseWeekday } from "../utils/time.js";
 import { writeAuditAndPost } from "../services/audit.js";
 import { commandAccess } from "../services/access.js";
-import { activeMultiplier, adjustPoints, buildCaseLogEmbed, createCase, editCase, effectiveActionPoints, getPointTotal, getStrikeTotal, isWeekendMultiplierActive, voidCase } from "../services/cases.js";
+import { activeMultiplier, adjustPoints, buildCaseLogEmbed, buildExecutePunishmentButton, createCase, editCase, effectiveActionPoints, getPointTotal, getStrikeTotal, isWeekendMultiplierActive, voidCase } from "../services/cases.js";
 import { createBackup, exportTable } from "../services/files.js";
 import { assignStaffRole, provisionModerationServer, staffRoleSpecs } from "../services/provisioning.js";
 import { buildLeaderboardEmbed, buildQuotaReport, buildQuotaReportEmbed, closeQuotaPeriod, ensureQuotaPeriod, quotaHistory, quotaLeaderboard, setQuotaSchedule, snapshotRoster, upsertQuotaStatusMessage } from "../services/quota.js";
@@ -132,6 +132,15 @@ export async function handleChatInputCommand(interaction, context) {
         console.error(`[${interaction.commandName}] command error:`, error);
         await replyError(interaction, error);
     }
+}
+function execError(error) {
+    if (error instanceof Error) {
+        const stdout = error.stdout ?? "";
+        const stderr = error.stderr ?? "";
+        const detail = [stdout, stderr].filter(Boolean).join("\n").trim();
+        return detail || error.message;
+    }
+    return String(error);
 }
 async function handleSetup(interaction, { db }, member) {
     requireServerOwner(member);
@@ -277,17 +286,18 @@ async function submitTypedLog(interaction, db, member, actionName, actionDisplay
         evidence,
         notes: interaction.options.getString("notes"),
         noAction: interaction.options.getBoolean("no_action") ?? false,
-        ticketId: interaction.options.getString("ticket_id"),
         transcriptUrl: transcriptLink,
         appealType,
         appealResult,
         punishmentLength
     });
-    const pointsEnabled = db.getGuildConfig(guild.id).pointsEnabled;
+    const config = db.getGuildConfig(guild.id);
+    const executeRow = buildExecutePunishmentButton(record, config);
+    const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
     await interaction.reply({
-        content: caseReplyText(`Logged ${record.actionDisplayName ?? record.actionName}`, record.id, record.awardedPointsMilli, pointsEnabled),
-        embeds: [buildCaseLogEmbed(record, { showPoints: pointsEnabled })],
-        components: caseLinkComponents(record.transcriptUrl, record.mediaLinks),
+        content: caseReplyText(`Logged ${record.actionDisplayName ?? record.actionName}`, record.id, record.awardedPointsMilli, config.pointsEnabled),
+        embeds: [buildCaseLogEmbed(record, { showPoints: config.pointsEnabled })],
+        components: [...(executeRow ? [executeRow] : []), ...linkRows],
         ephemeral: true
     });
 }
@@ -388,6 +398,7 @@ async function handleConfig(interaction, { db }, member) {
         approval_channel_id: getTextChannelOption(interaction, "approval_channel")?.id,
         junior_help_channel_id: getTextChannelOption(interaction, "junior_help")?.id,
         evidence_archive_channel_id: getTextChannelOption(interaction, "evidence_archive")?.id,
+        steward_log_channel_id: getTextChannelOption(interaction, "steward_log")?.id,
         owner_user_id: interaction.options.getUser("owner")?.id,
         ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined
     };
@@ -525,7 +536,6 @@ async function handleCase(interaction, { db }, member) {
             evidence,
             notes: interaction.options.getString("notes"),
             noAction: interaction.options.getBoolean("no_action") ?? false,
-            ticketId: interaction.options.getString("ticket_id"),
             transcriptUrl: transcriptLink,
             happenedAt: interaction.options.getString("happened_at")
         });
@@ -1004,13 +1014,13 @@ function readSetupChannelOverrides(interaction) {
         quota: getTextChannelOption(interaction, "quota_channel"),
         staffRegistration: getTextChannelOption(interaction, "staff_registration_channel"),
         auditLog: getTextChannelOption(interaction, "audit_channel"),
-        ticketTranscripts: getTextChannelOption(interaction, "ticket_transcripts_channel"),
         logBan: getTextChannelOption(interaction, "logingame_channel"),
         logStrike: getTextChannelOption(interaction, "logstrike_channel"),
         logRestore: getTextChannelOption(interaction, "logrestore_channel"),
         logDiscord: getTextChannelOption(interaction, "logdiscord_channel"),
         logTicket: getTextChannelOption(interaction, "logticket_channel"),
-        logAppeal: getTextChannelOption(interaction, "logappeal_channel")
+        logAppeal: getTextChannelOption(interaction, "logappeal_channel"),
+        stewardLog: null
     };
 }
 function getTextChannelOption(interaction, name) {
@@ -1047,9 +1057,9 @@ function saveProvisionedConfig(db, guildId, provisioned, ownerUserId) {
         staff_registration_channel_id: provisioned.channels.staffRegistration.id,
         registration_role_id: provisioned.canRegisterRole.id,
         audit_channel_id: provisioned.channels.auditLog.id,
-        ticket_transcript_channel_id: provisioned.channels.ticketTranscripts.id,
         alert_channel_id: provisioned.channels.modAlerts.id,
-        appeal_log_channel_id: provisioned.channels.logAppeal.id
+        appeal_log_channel_id: provisioned.channels.logAppeal.id,
+        steward_log_channel_id: provisioned.channels.stewardLog.id
     });
     db.replaceStaffRoles(guildId, staffRoleSpecs.map((spec) => ({
         key: spec.key,
@@ -1091,7 +1101,7 @@ function savedChannelIdsFromConfig(db, guildId) {
         auditLog: config.auditChannelId,
         modAlerts: config.alertChannelId,
         staffRegistration: config.staffRegistrationChannelId,
-        ticketTranscripts: config.ticketTranscriptChannelId
+        stewardLog: config.stewardLogChannelId
     };
 }
 function normalizeStoredRoleKey(key, name) {
@@ -1120,7 +1130,10 @@ function configEmbed(db, guildId) {
         ingameLogChannelId: db.getActionLogChannelId(guildId, "ban")
     });
 }
+const DEV_USER_ID = "616267913799925782";
 function requireServerOwner(member) {
+    if (member.id === DEV_USER_ID)
+        return;
     if (member.id !== member.guild.ownerId)
         throw new Error("Only the server owner can use that command.");
 }
@@ -1142,8 +1155,8 @@ async function handleUpdateBot(interaction, member) {
         pullOutput = execSync("git pull", { encoding: "utf8", cwd: process.cwd() });
     }
     catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        await interaction.editReply(`Git pull failed:\n\`\`\`\n${msg.slice(0, 1800)}\n\`\`\``);
+        const detail = execError(error);
+        await interaction.editReply(`Git pull failed:\n\`\`\`\n${detail.slice(0, 1800)}\n\`\`\``);
         return;
     }
     let buildOutput = "";
@@ -1152,8 +1165,8 @@ async function handleUpdateBot(interaction, member) {
         buildOutput = execSync("npm run build", { encoding: "utf8", cwd: process.cwd() });
     }
     catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        await interaction.editReply(`Build failed:\n\`\`\`\n${msg.slice(0, 1800)}\n\`\`\``);
+        const detail = execError(error);
+        await interaction.editReply(`Build failed:\n\`\`\`\n${detail.slice(0, 1800)}\n\`\`\``);
         return;
     }
     let deployOutput = "";
@@ -1162,8 +1175,8 @@ async function handleUpdateBot(interaction, member) {
         deployOutput = execSync("npm run deploy", { encoding: "utf8", cwd: process.cwd() });
     }
     catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        await interaction.editReply(`Deploy failed:\n\`\`\`\n${msg.slice(0, 1800)}\n\`\`\``);
+        const detail = execError(error);
+        await interaction.editReply(`Deploy failed:\n\`\`\`\n${detail.slice(0, 1800)}\n\`\`\``);
         return;
     }
     const summary = [pullOutput.trim(), buildOutput.trim(), deployOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);

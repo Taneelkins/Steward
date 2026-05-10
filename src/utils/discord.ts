@@ -192,6 +192,7 @@ export function configSummaryEmbed(config: GuildConfig, extra: { ingameLogChanne
       { name: "Ticket Transcripts", value: config.ticketTranscriptChannelId ? `<#${config.ticketTranscriptChannelId}>` : "Not set", inline: true },
       { name: "CM Approval", value: config.approvalChannelId ? `<#${config.approvalChannelId}>` : "Not set", inline: true },
       { name: "Junior Help", value: config.juniorHelpChannelId ? `<#${config.juniorHelpChannelId}>` : "Not set", inline: true },
+      { name: "Steward Actions", value: config.stewardLogChannelId ? `<#${config.stewardLogChannelId}>` : "Not set", inline: true },
       { name: "Timezone", value: config.timezone, inline: true },
       { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "Point System", value: config.pointsEnabled ? "Enabled" : "Disabled", inline: true },

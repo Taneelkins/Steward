@@ -350,13 +350,16 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
     }
     const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
     const appealChannel = actionName === "appeal" ? config.appealLogChannelId : null;
-    const logChannel = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
-    await postToConfiguredChannel(input.guild, logChannel, {
+    const logChannelId = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
+    const logMsg = await postToConfiguredChannel(input.guild, logChannelId, {
       ...(juniorEscalation ? { content: `${juniorEscalation.mentions} Junior Moderator log needs review.` } : {}),
       embeds: [embed],
       ...(linkComponents.length > 0 ? { components: linkComponents } : {}),
       ...(juniorEscalation?.roleIds.length ? { allowedMentions: { roles: juniorEscalation.roleIds, users: juniorEscalation.userIds } } : {})
     });
+    if (logMsg && logChannelId) {
+      db.updateCaseLogMessage(guildId, id, logChannelId, logMsg.id);
+    }
     if (requiresApproval) {
       await postApprovalRequest(db, input.guild, record);
     }
@@ -827,15 +830,18 @@ export async function handleJuniorReviewButton(db: AppDatabase, interaction: But
 
     const config2 = db.getGuildConfig(interaction.guild.id);
     const appealChannel = record.actionName === "appeal" ? config2.appealLogChannelId : null;
-    const logChannel = appealChannel ?? db.getActionLogChannelId(interaction.guild.id, record.actionName) ?? config2.actionLogChannelId;
+    const logChannelId2 = appealChannel ?? db.getActionLogChannelId(interaction.guild.id, record.actionName) ?? config2.actionLogChannelId;
     const logEmbed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
     const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
-    await postToConfiguredChannel(interaction.guild, logChannel, {
+    const juniorLogMsg = await postToConfiguredChannel(interaction.guild, logChannelId2, {
       content: `Junior Mod <@${record.moderatorUserId}> ticket verified by Moderator <@${interaction.user.id}>`,
       embeds: [logEmbed],
       ...(linkComponents.length > 0 ? { components: linkComponents } : {}),
       allowedMentions: { users: [record.moderatorUserId, interaction.user.id] }
     });
+    if (juniorLogMsg && logChannelId2) {
+      db.updateCaseLogMessage(interaction.guild.id, record.id, logChannelId2, juniorLogMsg.id);
+    }
 
     await interaction.update({
       embeds: [buildJuniorReviewEmbed(record, "approved", { reviewerUserId: interaction.user.id })],
@@ -1098,6 +1104,13 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
       caseId: record.id, discordTargetId, linkedGuildId: config.linkedGuildId, appealType: record.appealType
     });
 
+    // If a persistent timeout was active for this user, remove it now that their appeal was accepted
+    if (appealTypeLower.includes("timeout") || appealTypeLower.includes("mute")) {
+      db.deletePersistentTimeoutForTarget(interaction.guild!.id, config.linkedGuildId, discordTargetId);
+    }
+
+    await postStewardLog(db, interaction.guild!, config, record, interaction.user.id, "appeal-reversal", true);
+
     const dmNote = targetUser ? " DM sent." : " (Could not DM user.)";
     await interaction.editReply(`✅ ${resultMsg}${inviteUrl ? ` Invite: ${inviteUrl}` : ""}${dmNote}`);
     return true;
@@ -1151,6 +1164,37 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
   });
 
   if (success) {
+    // Schedule persistent timeout renewal for indefinite or >27-day timeouts
+    if (punishment.kind === "timeout") {
+      const rawDuration = parsePunishmentLength(record.punishmentLength);
+      const MAX_TIMEOUT = 27 * 24 * 60 * 60 * 1000;
+      if (!rawDuration || rawDuration > MAX_TIMEOUT) {
+        const renewAfter = new Date(Date.now() + 26 * 24 * 60 * 60 * 1000).toISOString();
+        db.schedulePersistentTimeout({ guildId: interaction.guild!.id, linkedGuildId: config.linkedGuildId, discordTargetId, caseId: record.id, renewAfter });
+      }
+    }
+
+    // Schedule temp ban unban if a duration was given
+    if (punishment.kind === "ban") {
+      const rawDuration = parsePunishmentLength(record.punishmentLength);
+      if (rawDuration) {
+        const unbanAt = new Date(Date.now() + rawDuration).toISOString();
+        db.scheduleUnban({
+          guildId: interaction.guild!.id,
+          linkedGuildId: config.linkedGuildId,
+          discordTargetId,
+          caseId: record.id,
+          unbanAt,
+          moderationInvite: config.moderationInvite,
+          caseAction: record.actionDisplayName ?? record.actionName,
+          caseReason: record.reason
+        });
+      }
+    }
+
+    // Post to steward log
+    await postStewardLog(db, interaction.guild!, config, record, interaction.user.id, punishment.kind, success);
+
     const dmNote = targetUser ? " DM sent." : " (Could not DM user.)";
     const capNote = errorMsg ? `\n⚠️ ${errorMsg}` : "";
     await interaction.editReply(`✅ <@${discordTargetId}> has been ${actionLabel} in **${linkedGuild.name}**.${dmNote}${capNote}`);
@@ -1158,6 +1202,30 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
     await interaction.editReply(`❌ Failed to ${punishment.kind} \`${discordTargetId}\`: ${errorMsg}\n\nCheck bot permissions in the linked server.`);
   }
   return true;
+}
+
+async function postStewardLog(
+  db: AppDatabase,
+  guild: Guild,
+  config: ReturnType<AppDatabase["getGuildConfig"]>,
+  record: ModerationCase,
+  executorUserId: string,
+  actionKind: string,
+  success: boolean
+) {
+  if (!config.stewardLogChannelId) return;
+  const reloadedRecord = db.getCase(guild.id, record.id) ?? record;
+  const caseUrl = reloadedRecord.logChannelId && reloadedRecord.logMessageId
+    ? `https://discord.com/channels/${guild.id}/${reloadedRecord.logChannelId}/${reloadedRecord.logMessageId}`
+    : null;
+  const lines = [
+    `**Action:** ${actionKind.charAt(0).toUpperCase() + actionKind.slice(1)}${success ? "" : " ❌ (failed)"}`,
+    `**Moderator:** <@${executorUserId}>`,
+    `**Target:** ${reloadedRecord.discordId ? `<@${reloadedRecord.discordId}>` : reloadedRecord.targetUsername}`,
+    `**When:** <t:${Math.floor(Date.now() / 1000)}:f>`,
+    caseUrl ? `**Log:** [Case #${record.id}](${caseUrl})` : `**Case:** #${record.id}`
+  ].join("\n");
+  await postToConfiguredChannel(guild, config.stewardLogChannelId, { content: lines, allowedMentions: { parse: [] } });
 }
 
 async function maybePostFastPointsAlert(db: AppDatabase, guild: Guild, record: ModerationCase) {

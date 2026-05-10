@@ -23,7 +23,8 @@ export type SetupChannelKey =
   | "auditLog"
   | "modAlerts"
   | "staffRegistration"
-  | "evidenceArchive";
+  | "evidenceArchive"
+  | "stewardLog";
 
 export type StaffRoleSpec = {
   key: StaffRoleKey;
@@ -70,7 +71,8 @@ export const setupChannelSpecs: SetupChannelSpec[] = [
   { key: "auditLog", name: "audit-log", topic: "Bot audit events." },
   { key: "modAlerts", name: "mod-alerts", topic: "Administrative alerts, review flags, and quota-end pings." },
   { key: "staffRegistration", name: "staff-registration", topic: "Staff registration notices." },
-  { key: "evidenceArchive", name: "evidence-archive", topic: "Protected archived evidence re-uploaded by the moderation ledger bot." }
+  { key: "evidenceArchive", name: "evidence-archive", topic: "Protected archived evidence re-uploaded by the moderation ledger bot." },
+  { key: "stewardLog", name: "steward-actions", topic: "Steward bot action log. Auto-posted when punishments are executed." }
 ];
 
 export type ProvisionedServer = {

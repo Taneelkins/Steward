@@ -82,6 +82,32 @@ export class AppDatabase {
         this.run("INSERT OR IGNORE INTO strike_thresholds (guild_id, strike_count, label, created_at) VALUES (?, 3, 'Staff alert', ?)", guildId, timestamp);
         this.run("INSERT OR IGNORE INTO strike_thresholds (guild_id, strike_count, label, created_at) VALUES (?, 5, 'Urgent staff alert', ?)", guildId, timestamp);
     }
+    updateCaseLogMessage(guildId, caseId, channelId, messageId) {
+        this.run("UPDATE moderation_cases SET log_channel_id = ?, log_message_id = ?, updated_at = ? WHERE guild_id = ? AND id = ?", channelId, messageId, nowIso(), guildId, caseId);
+    }
+    schedulePersistentTimeout(values) {
+        this.run("DELETE FROM persistent_timeouts WHERE guild_id = ? AND linked_guild_id = ? AND discord_target_id = ?", values.guildId, values.linkedGuildId, values.discordTargetId);
+        this.run("INSERT INTO persistent_timeouts (guild_id, linked_guild_id, discord_target_id, case_id, renew_after, created_at) VALUES (?, ?, ?, ?, ?, ?)", values.guildId, values.linkedGuildId, values.discordTargetId, values.caseId ?? null, values.renewAfter, nowIso());
+    }
+    deletePersistentTimeout(id) {
+        this.run("DELETE FROM persistent_timeouts WHERE id = ?", id);
+    }
+    deletePersistentTimeoutForTarget(guildId, linkedGuildId, discordTargetId) {
+        this.run("DELETE FROM persistent_timeouts WHERE guild_id = ? AND linked_guild_id = ? AND discord_target_id = ?", guildId, linkedGuildId, discordTargetId);
+    }
+    getDuePersistentTimeouts() {
+        return this.all("SELECT * FROM persistent_timeouts WHERE renew_after <= ?", nowIso());
+    }
+    scheduleUnban(values) {
+        this.run("DELETE FROM scheduled_unbans WHERE guild_id = ? AND linked_guild_id = ? AND discord_target_id = ?", values.guildId, values.linkedGuildId, values.discordTargetId);
+        this.run("INSERT INTO scheduled_unbans (guild_id, linked_guild_id, discord_target_id, case_id, unban_at, moderation_invite, case_action, case_reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", values.guildId, values.linkedGuildId, values.discordTargetId, values.caseId ?? null, values.unbanAt, values.moderationInvite ?? null, values.caseAction ?? null, values.caseReason ?? null, nowIso());
+    }
+    deleteScheduledUnban(id) {
+        this.run("DELETE FROM scheduled_unbans WHERE id = ?", id);
+    }
+    getDueScheduledUnbans() {
+        return this.all("SELECT * FROM scheduled_unbans WHERE unban_at <= ?", nowIso());
+    }
     isLinkedCommunityServer(guildId) {
         return Boolean(this.get("SELECT 1 FROM guild_configs WHERE linked_guild_id = ?", guildId));
     }
@@ -448,6 +474,29 @@ export class AppDatabase {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS persistent_timeouts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        linked_guild_id TEXT NOT NULL,
+        discord_target_id TEXT NOT NULL,
+        case_id INTEGER,
+        renew_after TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS scheduled_unbans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        linked_guild_id TEXT NOT NULL,
+        discord_target_id TEXT NOT NULL,
+        case_id INTEGER,
+        unban_at TEXT NOT NULL,
+        moderation_invite TEXT,
+        case_action TEXT,
+        case_reason TEXT,
+        created_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_cases_guild_created ON moderation_cases (guild_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_cases_mod_created ON moderation_cases (guild_id, moderator_user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_cases_target_created ON moderation_cases (guild_id, target_user_id, created_at);
@@ -487,9 +536,12 @@ export class AppDatabase {
         this.ensureColumn("guild_configs", "junior_help_channel_id", "TEXT");
         this.ensureColumn("guild_configs", "linked_guild_id", "TEXT");
         this.ensureColumn("guild_configs", "moderation_invite", "TEXT");
+        this.ensureColumn("guild_configs", "steward_log_channel_id", "TEXT");
         this.ensureColumn("pending_ticket_logs", "closed_channel_id", "TEXT");
         this.ensureColumn("pending_ticket_logs", "closed_channel_name", "TEXT");
         this.ensureColumn("staff_roles", "role_key", "TEXT");
+        this.ensureColumn("moderation_cases", "log_message_id", "TEXT");
+        this.ensureColumn("moderation_cases", "log_channel_id", "TEXT");
     }
     ensureColumn(table, column, definition) {
         const columns = this.all(`PRAGMA table_info(${table})`);
@@ -520,6 +572,7 @@ function mapGuildConfig(row) {
         appealLogChannelId: row.appeal_log_channel_id,
         approvalChannelId: row.approval_channel_id,
         juniorHelpChannelId: row.junior_help_channel_id,
+        stewardLogChannelId: row.steward_log_channel_id,
         juniorEscalationRoleIds: parseStringList(row.junior_escalation_role_ids_json),
         juniorEscalationUserIds: parseStringList(row.junior_escalation_user_ids_json),
         juniorOtherEscalationRoleIds: parseStringList(row.junior_other_escalation_role_ids_json),
@@ -600,6 +653,8 @@ function mapCase(row) {
         approvalMessageId: row.approval_message_id,
         juniorReviewStatus: mapApprovalStatus(row.junior_review_status),
         juniorReviewMessageId: row.junior_review_message_id ?? null,
+        logMessageId: row.log_message_id ?? null,
+        logChannelId: row.log_channel_id ?? null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         voidedAt: row.voided_at,

