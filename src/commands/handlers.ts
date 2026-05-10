@@ -144,6 +144,9 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
       case "ticketlog":
         await handleTicketlog(interaction, context, member);
         break;
+      case "lookup":
+        await handleLookup(interaction, context, member);
+        break;
       case "staff":
         await handleStaff(interaction, context, member);
         break;
@@ -408,10 +411,14 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
 
   if (subcommand === "behavior") {
     const interactiveLog = interaction.options.getBoolean("interactive_log");
+    const linkedServer = interaction.options.getString("linked_server");
+    const moderationInvite = interaction.options.getString("moderation_invite");
     db.updateGuildConfig(guild.id, {
-      interactive_log_enabled: interactiveLog === null ? undefined : interactiveLog ? 1 : 0
+      interactive_log_enabled: interactiveLog === null ? undefined : interactiveLog ? 1 : 0,
+      ...(linkedServer !== null ? { linked_guild_id: linkedServer || null } : {}),
+      ...(moderationInvite !== null ? { moderation_invite: moderationInvite || null } : {})
     });
-    await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog });
+    await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog, linkedServer, moderationInvite });
     await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
     return;
   }
@@ -980,6 +987,56 @@ async function handleStaff(interaction: ChatInputCommandInteraction, { db }: Com
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
+async function handleLookup(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
+  await requireMod(db, member);
+  const guild = interaction.guild!;
+  const robloxUser = interaction.options.getString("roblox_user")?.trim() || undefined;
+  const discordUser = interaction.options.getString("discord_user")?.trim() || undefined;
+  const robloxId = interaction.options.getString("roblox_id")?.trim() || undefined;
+  const discordId = interaction.options.getString("discord_id")?.trim() || undefined;
+
+  if (!robloxUser && !discordUser && !robloxId && !discordId) {
+    await interaction.reply({ content: "Provide at least one search parameter.", ephemeral: true });
+    return;
+  }
+
+  const cases = db.searchCases(guild.id, { robloxUser, discordUser, robloxId, discordId });
+  if (cases.length === 0) {
+    await interaction.reply({ content: "No cases found matching those search terms.", ephemeral: true });
+    return;
+  }
+
+  const lines = cases.map((c) => {
+    const action = c.actionDisplayName ?? c.actionName;
+    const date = c.createdAt.slice(0, 10);
+    const target = [
+      c.robloxUsername ? `RobloxUser: ${c.robloxUsername}` : null,
+      c.discordUsername ? `DiscordUser: ${c.discordUsername}` : null,
+      c.robloxId ? `RobloxID: ${c.robloxId}` : null,
+      c.discordId ? `DiscordID: ${c.discordId}` : null
+    ].filter(Boolean).join(" | ") || c.targetUsername;
+    const reason = truncate(c.reason, 60);
+    const status = c.status === "void" ? " [VOID]" : c.approvalStatus === "pending" ? " [PENDING APPROVAL]" : "";
+    return `**#${c.id}** ${action.toUpperCase()}${status} — ${target}\n> ${reason} — *${date}*`;
+  });
+
+  const searchTerms = [
+    robloxUser ? `RobloxUser: ${robloxUser}` : null,
+    discordUser ? `DiscordUser: ${discordUser}` : null,
+    robloxId ? `RobloxID: ${robloxId}` : null,
+    discordId ? `DiscordID: ${discordId}` : null
+  ].filter(Boolean).join(", ");
+
+  const embed = new EmbedBuilder()
+    .setTitle(`Case Lookup — ${cases.length} result${cases.length === 1 ? "" : "s"}`)
+    .setDescription(truncate(lines.join("\n"), 4000))
+    .setFooter({ text: `Search: ${searchTerms}${cases.length === 20 ? " · Showing first 20" : ""}` })
+    .setColor(0x5865f2)
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed], ephemeral: true, allowedMentions: { parse: [] } });
+}
+
 async function handleAudit(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
   await requireAdmin(db, member);
   const limit = Math.min(Math.max(interaction.options.getInteger("limit") ?? 10, 1), 25);
@@ -1388,7 +1445,9 @@ async function handleConfigCheck(interaction: ChatInputCommandInteraction, db: A
     user(config.ownerUserId, "Owner DM"),
     bool(config.pointsEnabled, "Point System Enabled"),
     bool(config.quotaEnabled, "Quota Enabled"),
-    bool(Boolean(config.quotaPeriodStart && config.quotaPeriodEnd), "Quota Period Active")
+    bool(Boolean(config.quotaPeriodStart && config.quotaPeriodEnd), "Quota Period Active"),
+    config.linkedGuildId ? `✅ Linked Server: \`${config.linkedGuildId}\`` : `⬜ Linked Server: Not set (optional)`,
+    config.moderationInvite ? `✅ Moderation Invite: set` : `⬜ Moderation Invite: Not set (optional)`
   ];
 
   const allLines = [...channelLines, ...roleLines, ...otherLines];

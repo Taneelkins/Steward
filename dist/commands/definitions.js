@@ -59,6 +59,14 @@ export function buildCommands(options = {}) {
         quotaCommand(pointsEnabled),
         ticketlogCommand(),
         new SlashCommandBuilder()
+            .setName("lookup")
+            .setDescription("Search all case logs by target identity.")
+            .addStringOption((option) => option.setName("roblox_user").setDescription("Roblox username (partial match)."))
+            .addStringOption((option) => option.setName("discord_user").setDescription("Discord username (partial match)."))
+            .addStringOption((option) => option.setName("roblox_id").setDescription("Roblox user ID (exact)."))
+            .addStringOption((option) => option.setName("discord_id").setDescription("Discord user ID (exact)."))
+            .setDefaultMemberPermissions(normalDefault),
+        new SlashCommandBuilder()
             .setName("staff")
             .setDescription("View staff profiles.")
             .addUserOption((option) => option.setName("moderator").setDescription("Moderator.").setRequired(true))
@@ -131,7 +139,9 @@ function configCommand() {
         .addSubcommand((sub) => sub
         .setName("behavior")
         .setDescription("Configure bot behavior settings.")
-        .addBooleanOption((option) => option.setName("interactive_log").setDescription("Enable /log button workflow.")))
+        .addBooleanOption((option) => option.setName("interactive_log").setDescription("Enable /log button workflow."))
+        .addStringOption((option) => option.setName("linked_server").setDescription("Guild ID of the linked community server for cross-server punishment enforcement."))
+        .addStringOption((option) => option.setName("moderation_invite").setDescription("Permanent invite link to include in punishment DMs (e.g. https://discord.gg/...).")))
         .addSubcommand((sub) => sub
         .setName("check")
         .setDescription("Show which configs are set and which are missing."))

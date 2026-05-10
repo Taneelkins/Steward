@@ -127,6 +127,21 @@ const helpCommands: HelpCommand[] = [
     requiresPoints: true
   },
   {
+    id: "lookup",
+    label: "/lookup",
+    access: "normal",
+    levels: ["moderator", "senior", "admin"],
+    what: "Searches all case logs for a specific target by Roblox username, Discord username, Roblox ID, or Discord ID.",
+    who: "Moderator and above.",
+    usage: ["`/lookup roblox_user:TestUser`", "`/lookup discord_id:123456789`", "`/lookup roblox_id:456789 discord_user:TestUser`"],
+    examples: ["`/lookup roblox_user:TestUser`", "`/lookup discord_id:123456789012345678`"],
+    notes: [
+      "Username fields use partial matching. ID fields are exact.",
+      "Returns up to 20 most recent matching cases.",
+      "Shows all case statuses including voided and pending cases."
+    ]
+  },
+  {
     id: "case",
     label: "/case",
     access: "normal",

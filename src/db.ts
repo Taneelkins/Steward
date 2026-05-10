@@ -262,6 +262,33 @@ export class AppDatabase {
     return row ? mapCase(row) : undefined;
   }
 
+  searchCases(guildId: string, params: { robloxUser?: string; discordUser?: string; robloxId?: string; discordId?: string }, limit = 20) {
+    const conditions: string[] = [];
+    const args: (string | number)[] = [guildId];
+    if (params.robloxUser) {
+      conditions.push("LOWER(roblox_username) LIKE LOWER(?)");
+      args.push(`%${params.robloxUser}%`);
+    }
+    if (params.discordUser) {
+      conditions.push("LOWER(discord_username) LIKE LOWER(?)");
+      args.push(`%${params.discordUser}%`);
+    }
+    if (params.robloxId) {
+      conditions.push("roblox_id = ?");
+      args.push(params.robloxId);
+    }
+    if (params.discordId) {
+      conditions.push("(discord_id = ? OR target_user_id = ?)");
+      args.push(params.discordId, `discord:${params.discordId}`);
+    }
+    if (conditions.length === 0) return [];
+    args.push(limit);
+    return this.all<CaseRow>(
+      `SELECT * FROM moderation_cases WHERE guild_id = ? AND (${conditions.join(" OR ")}) ORDER BY created_at DESC LIMIT ?`,
+      ...args
+    ).map(mapCase);
+  }
+
   listRecentCases(guildId: string, limit = 10) {
     return this.all<CaseRow>(
       "SELECT * FROM moderation_cases WHERE guild_id = ? ORDER BY id DESC LIMIT ?",
@@ -315,6 +342,8 @@ export class AppDatabase {
           staff_registration_channel_id TEXT,
           registration_role_id TEXT,
           ticket_transcript_channel_id TEXT,
+        linked_guild_id TEXT,
+        moderation_invite TEXT,
         owner_user_id TEXT,
         ticket_tool_bot_id TEXT,
         evidence_archive_channel_id TEXT,
@@ -590,6 +619,8 @@ export class AppDatabase {
     this.ensureColumn("moderation_cases", "junior_review_status", "TEXT");
     this.ensureColumn("moderation_cases", "junior_review_message_id", "TEXT");
     this.ensureColumn("guild_configs", "junior_help_channel_id", "TEXT");
+    this.ensureColumn("guild_configs", "linked_guild_id", "TEXT");
+    this.ensureColumn("guild_configs", "moderation_invite", "TEXT");
     this.ensureColumn("pending_ticket_logs", "closed_channel_id", "TEXT");
     this.ensureColumn("pending_ticket_logs", "closed_channel_name", "TEXT");
     this.ensureColumn("staff_roles", "role_key", "TEXT");
@@ -615,6 +646,8 @@ type GuildConfigRow = {
   staff_registration_channel_id: string | null;
   registration_role_id: string | null;
   ticket_transcript_channel_id: string | null;
+  linked_guild_id: string | null;
+  moderation_invite: string | null;
   owner_user_id: string | null;
   ticket_tool_bot_id: string | null;
   evidence_archive_channel_id: string | null;
@@ -756,6 +789,8 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     staffRegistrationChannelId: row.staff_registration_channel_id,
     registrationRoleId: row.registration_role_id,
     ticketTranscriptChannelId: row.ticket_transcript_channel_id,
+    linkedGuildId: row.linked_guild_id,
+    moderationInvite: row.moderation_invite,
     ownerUserId: row.owner_user_id,
     ticketToolBotId: row.ticket_tool_bot_id,
     evidenceArchiveChannelId: row.evidence_archive_channel_id,
