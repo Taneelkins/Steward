@@ -259,7 +259,6 @@ async function submitTypedLog(interaction, db, member, actionName, actionDisplay
         evidence,
         notes: interaction.options.getString("notes"),
         noAction: interaction.options.getBoolean("no_action") ?? false,
-        ticketId: interaction.options.getString("ticket_id"),
         transcriptUrl: transcriptLink,
         appealType,
         appealResult,
@@ -504,7 +503,6 @@ async function handleCase(interaction, { db }, member) {
             evidence,
             notes: interaction.options.getString("notes"),
             noAction: interaction.options.getBoolean("no_action") ?? false,
-            ticketId: interaction.options.getString("ticket_id"),
             transcriptUrl: transcriptLink,
             happenedAt: interaction.options.getString("happened_at")
         });

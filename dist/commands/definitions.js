@@ -206,7 +206,6 @@ function caseCommand(pointsEnabled) {
         .addStringOption((option) => option.setName("evidence").setDescription("Evidence link or text."))
         .addStringOption((option) => option.setName("notes").setDescription("Extra details."))
         .addBooleanOption((option) => option.setName("no_action").setDescription("Ticket required no moderation action."))
-        .addStringOption((option) => option.setName("ticket_id").setDescription("Ticket ID, if this came from a ticket."))
         .addStringOption((option) => option.setName("happened_at").setDescription("Optional ISO date/time for late-log flag.")))
         .addSubcommand((sub) => sub
         .setName("edit")
@@ -368,7 +367,6 @@ function logCommand() {
         .addStringOption((option) => option.setName("evidence").setDescription("Evidence link or text."))
         .addStringOption((option) => option.setName("notes").setDescription("Extra details."))
         .addBooleanOption((option) => option.setName("no_action").setDescription("Ticket required no moderation action."))
-        .addStringOption((option) => option.setName("ticket_id").setDescription("Ticket ID, if available."))
         .addStringOption((option) => option.setName("happened_at").setDescription("Optional ISO date/time for late-log flag."))
         .addStringOption((option) => option.setName("appeal_type").setDescription("Appeal type for appeal logs: ban-appeal, timeout-appeal, warn-appeal, mute-appeal, ingame-appeal."))
         .addStringOption((option) => option.setName("appeal_result").setDescription("Result for appeal logs: accepted or denied."))

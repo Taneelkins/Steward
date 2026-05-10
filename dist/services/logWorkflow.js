@@ -43,7 +43,6 @@ export function injectDraftFromDeniedCase(record) {
         evidence: record.evidence,
         notes: record.notes,
         noAction: record.isNoAction,
-        ticketId: record.ticketId,
         transcriptUrl: record.transcriptUrl,
         mediaLinks: record.mediaLinks,
         mediaCaptureEnabled: false,
@@ -77,7 +76,7 @@ function saveDraftToDisk(draft) {
             actionDisplayName: draft.actionDisplayName, appealType: draft.appealType,
             appealResult: draft.appealResult, punishmentLength: draft.punishmentLength,
             targetInfo: draft.targetInfo, reason: draft.reason, evidence: draft.evidence,
-            notes: draft.notes, noAction: draft.noAction, ticketId: draft.ticketId,
+            notes: draft.notes, noAction: draft.noAction,
             transcriptUrl: draft.transcriptUrl, mediaLinks: draft.mediaLinks,
             mediaCaptureEnabled: draft.mediaCaptureEnabled, happenedAt: draft.happenedAt,
             isHeadMod: draft.isHeadMod, editCaseId: draft.editCaseId,
@@ -413,7 +412,6 @@ function createDraft(guildId, userId, channelId, isHeadMod) {
         evidence: null,
         notes: null,
         noAction: false,
-        ticketId: null,
         transcriptUrl: null,
         mediaLinks: [],
         mediaCaptureEnabled: false,
@@ -591,7 +589,6 @@ function confirmComponents(draft, disabled = false) {
 }
 function fieldsComponents(draft, disabled = false, db) {
     const targetComplete = hasTarget(draft.targetInfo);
-    const evidenceRequired = isEvidenceRequired(draft, db);
     const evidenceComplete = hasEvidence(draft);
     const appealRequired = draft.actionName === "appeal";
     const appealComplete = Boolean(draft.appealResult);
@@ -599,7 +596,7 @@ function fieldsComponents(draft, disabled = false, db) {
         ...(draft.editCaseId
             ? []
             : [new ButtonBuilder().setCustomId(`log:${draft.id}:modal:target`).setLabel("Target").setStyle(requiredStyle(targetComplete)).setDisabled(disabled)]),
-        new ButtonBuilder().setCustomId(`log:${draft.id}:modal:evidence`).setLabel("Evidence").setStyle(requiredStyle(evidenceComplete, evidenceRequired)).setDisabled(disabled),
+        new ButtonBuilder().setCustomId(`log:${draft.id}:modal:evidence`).setLabel("Evidence").setStyle(evidenceComplete ? ButtonStyle.Success : ButtonStyle.Secondary).setDisabled(disabled),
         new ButtonBuilder().setCustomId(`log:${draft.id}:modal:info`).setLabel("Info").setStyle(ButtonStyle.Primary).setDisabled(disabled),
         new ButtonBuilder().setCustomId(`log:${draft.id}:modal:details`).setLabel("Details").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
         ...(appealRequired
@@ -622,7 +619,7 @@ function buildModal(draft, modalType) {
         return new ModalBuilder()
             .setCustomId(`log:${draft.id}:save:details`)
             .setTitle("Log Details")
-            .addComponents(textRow("ticket_id", "Ticket ID", draft.ticketId, false), textRow("transcript_link", "TranscriptLink", draft.transcriptUrl, false), textRow("punishment_length", "Punishment Length", draft.punishmentLength, false), textRow("happened_at", "Happened At", draft.happenedAt, false), textRow("no_action", "No Action? yes/no", draft.noAction ? "yes" : "no", false));
+            .addComponents(textRow("transcript_link", "Transcript Link", draft.transcriptUrl, false), textRow("punishment_length", "Punishment Length", draft.punishmentLength, false), textRow("happened_at", "Happened At", draft.happenedAt, false), textRow("no_action", "No Action? yes/no", draft.noAction ? "yes" : "no", false));
     }
     if (modalType === "appeal_info") {
         return new ModalBuilder()
@@ -664,7 +661,6 @@ function saveModalFields(draft, modalType, interaction) {
         return;
     }
     if (modalType === "details") {
-        draft.ticketId = clean(interaction.fields.getTextInputValue("ticket_id"));
         draft.transcriptUrl = clean(interaction.fields.getTextInputValue("transcript_link"));
         draft.punishmentLength = clean(interaction.fields.getTextInputValue("punishment_length"));
         draft.happenedAt = clean(interaction.fields.getTextInputValue("happened_at"));
@@ -716,7 +712,6 @@ async function submitDraft(db, interaction, draft) {
         evidence,
         notes: draft.notes,
         noAction: draft.noAction,
-        ticketId: draft.ticketId,
         transcriptUrl: draft.transcriptUrl,
         mediaLinks: archivedLinks,
         appealType: draft.appealType,
@@ -748,11 +743,11 @@ async function resubmitEditedDraft(db, interaction, draft) {
         : draft.mediaLinks;
     const timestamp = new Date().toISOString();
     db.run(`UPDATE moderation_cases SET
-      reason = ?, evidence = ?, notes = ?, ticket_id = ?, transcript_url = ?,
+      reason = ?, evidence = ?, notes = ?, transcript_url = ?,
       media_links_json = ?, punishment_length = ?, is_no_action = ?,
       appeal_type = ?, appeal_result = ?,
       junior_review_status = 'pending', updated_at = ?
-     WHERE guild_id = ? AND id = ?`, draft.reason ?? "No reason provided.", evidence, draft.notes ?? null, draft.ticketId ?? null, draft.transcriptUrl ?? null, archivedLinks.length > 0 ? JSON.stringify(archivedLinks) : null, draft.punishmentLength ?? null, draft.noAction ? 1 : 0, draft.appealType ?? null, draft.appealResult ?? null, timestamp, draft.guildId, caseId);
+     WHERE guild_id = ? AND id = ?`, draft.reason ?? "No reason provided.", evidence, draft.notes ?? null, draft.transcriptUrl ?? null, archivedLinks.length > 0 ? JSON.stringify(archivedLinks) : null, draft.punishmentLength ?? null, draft.noAction ? 1 : 0, draft.appealType ?? null, draft.appealResult ?? null, timestamp, draft.guildId, caseId);
     const updatedRecord = db.getCase(draft.guildId, caseId);
     if (!updatedRecord) {
         await interaction.reply({ content: "Failed to update case.", ephemeral: true });
@@ -833,7 +828,6 @@ function formatDraftInformation(draft) {
         draft.mediaLinks.length > 0 ? `Media: ${draft.mediaLinks.map((link) => link.label).join(", ")}` : null,
         `Notes: ${draft.notes ?? "None"}`,
         `No Action: ${draft.noAction ? "Yes" : "No"}`,
-        draft.ticketId ? `Ticket ID: ${draft.ticketId}` : null,
         draft.transcriptUrl ? "Transcript: will show as a button" : null,
         draft.punishmentLength ? `Punishment Length: ${draft.punishmentLength}` : null,
         draft.happenedAt ? `Happened At: ${draft.happenedAt}` : null,
@@ -887,10 +881,6 @@ function missingRequiredFields(db, draft) {
         missing.push("Target");
     if (draft.actionName === "appeal" && !draft.appealResult)
         missing.push("Appeal Result");
-    const action = draft.actionName ? db.getAction(draft.guildId, draft.actionName) : null;
-    if ((action?.evidenceRequired ?? isEvidenceRequired(draft, db)) && !hasEvidence(draft)) {
-        missing.push("Evidence");
-    }
     return missing;
 }
 function addMediaLinks(draft, message) {
