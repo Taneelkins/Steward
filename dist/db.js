@@ -454,6 +454,9 @@ export class AppDatabase {
         this.ensureColumn("moderation_cases", "punishment_length", "TEXT");
         this.ensureColumn("moderation_cases", "approval_status", "TEXT");
         this.ensureColumn("moderation_cases", "approval_message_id", "TEXT");
+        this.ensureColumn("moderation_cases", "junior_review_status", "TEXT");
+        this.ensureColumn("moderation_cases", "junior_review_message_id", "TEXT");
+        this.ensureColumn("guild_configs", "junior_help_channel_id", "TEXT");
         this.ensureColumn("pending_ticket_logs", "closed_channel_id", "TEXT");
         this.ensureColumn("pending_ticket_logs", "closed_channel_name", "TEXT");
         this.ensureColumn("staff_roles", "role_key", "TEXT");
@@ -485,6 +488,7 @@ function mapGuildConfig(row) {
         evidenceArchiveChannelId: row.evidence_archive_channel_id,
         appealLogChannelId: row.appeal_log_channel_id,
         approvalChannelId: row.approval_channel_id,
+        juniorHelpChannelId: row.junior_help_channel_id,
         juniorEscalationRoleIds: parseStringList(row.junior_escalation_role_ids_json),
         juniorEscalationUserIds: parseStringList(row.junior_escalation_user_ids_json),
         juniorOtherEscalationRoleIds: parseStringList(row.junior_other_escalation_role_ids_json),
@@ -563,6 +567,8 @@ function mapCase(row) {
         punishmentLength: row.punishment_length,
         approvalStatus: mapApprovalStatus(row.approval_status),
         approvalMessageId: row.approval_message_id,
+        juniorReviewStatus: mapApprovalStatus(row.junior_review_status),
+        juniorReviewMessageId: row.junior_review_message_id ?? null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
         voidedAt: row.voided_at,

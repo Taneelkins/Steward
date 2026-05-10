@@ -1,5 +1,5 @@
 import type { Guild, GuildMember, User } from "discord.js";
-import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, EmbedBuilder } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, EmbedBuilder, ModalBuilder, ModalSubmitInteraction, TextInputBuilder, TextInputStyle } from "discord.js";
 import type { AppDatabase } from "../db.js";
 import type { ActionPreset, CaseMediaLink, ModerationCase } from "../types.js";
 import { formatMultiplier, formatPoints, truncate } from "../utils/format.js";
@@ -235,6 +235,7 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
   const config = db.getGuildConfig(guildId);
   const isCm = getStaffTier(db, input.moderator) === "community";
   const requiresApproval = Boolean(config.approvalChannelId && !isCm && input.moderator.id !== input.guild.ownerId);
+  const juniorNeedsReview = isJuniorOnlyMod(db, input.moderator) && Boolean(config.juniorHelpChannelId);
   const multiplierMilli = config.pointsEnabled ? activeMultiplier(config) : 1000;
   const actionPoints = effectiveActionPoints(action);
   const basePointsMilli = config.pointsEnabled ? input.noAction ? actionPoints.noActionPointsMilli : actionPoints.basePointsMilli : 0;
@@ -264,8 +265,8 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
         roblox_id, discord_id, moderator_user_id, moderator_username,
         action_name, action_display_name, reason, evidence, notes, base_points_milli, multiplier_milli,
         awarded_points_milli, strikes, status, flags, is_late, is_no_action,
-        ticket_id, transcript_url, media_links_json, created_at, updated_at, approval_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ticket_id, transcript_url, media_links_json, created_at, updated_at, approval_status, junior_review_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       guildId,
       target.targetKey,
       target.targetLabel,
@@ -292,10 +293,11 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
       mediaLinks.length > 0 ? JSON.stringify(mediaLinks) : null,
       timestamp,
       timestamp,
-      requiresApproval ? "pending" : null
+      requiresApproval ? "pending" : null,
+      juniorNeedsReview ? "pending" : null
     );
     const caseId = Number(result.lastInsertRowid);
-    if (!requiresApproval && config.pointsEnabled && awardedPointsMilli !== 0) {
+    if (!requiresApproval && !juniorNeedsReview && config.pointsEnabled && awardedPointsMilli !== 0) {
       db.run(
         `INSERT INTO point_ledger (guild_id, moderator_user_id, case_id, amount_milli, reason, type, created_by, created_at)
          VALUES (?, ?, ?, ?, ?, 'award', ?, ?)`,
@@ -334,35 +336,37 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
   if (!record) throw new Error("Case was created but could not be loaded.");
 
   const juniorEscalation = getJuniorEscalation(db, input.moderator, actionName);
-  const embed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
-  if (juniorEscalation) {
-    embed.addFields({
-      name: "Staff Review Required",
-      value: [
-        "This log was submitted by a Junior Moderator.",
-        `${juniorEscalation.mentions} needs to review this action.`
-      ].join("\n"),
-      inline: false
+
+  if (juniorNeedsReview && juniorEscalation) {
+    await postJuniorReviewRequest(db, input.guild, record, juniorEscalation);
+  } else {
+    const embed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
+    if (juniorEscalation) {
+      embed.addFields({
+        name: "Staff Review Required",
+        value: `This log was submitted by a Junior Moderator. ${juniorEscalation.mentions} needs to review this action.`,
+        inline: false
+      });
+    }
+    if (requiresApproval) {
+      embed.addFields({
+        name: "⏳ Pending CM Approval",
+        value: "This log requires Community Manager approval before it counts toward quota and points.",
+        inline: false
+      });
+    }
+    const components = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+    const appealChannel = actionName === "appeal" ? config.appealLogChannelId : null;
+    const logChannel = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
+    await postToConfiguredChannel(input.guild, logChannel, {
+      ...(juniorEscalation ? { content: `${juniorEscalation.mentions} Junior Moderator log needs review.` } : {}),
+      embeds: [embed],
+      ...(components.length > 0 ? { components } : {}),
+      ...(juniorEscalation?.roleIds.length ? { allowedMentions: { roles: juniorEscalation.roleIds, users: juniorEscalation.userIds } } : {})
     });
-  }
-  if (requiresApproval) {
-    embed.addFields({
-      name: "⏳ Pending CM Approval",
-      value: "This log requires Community Manager approval before it counts toward quota and points.",
-      inline: false
-    });
-  }
-  const components = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
-  const appealChannel = actionName === "appeal" ? config.appealLogChannelId : null;
-  const logChannel = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
-  await postToConfiguredChannel(input.guild, logChannel, {
-    ...(juniorEscalation ? { content: `${juniorEscalation.mentions} Junior Moderator log needs review.` } : {}),
-    embeds: [embed],
-    ...(components.length > 0 ? { components } : {}),
-    ...(juniorEscalation?.roleIds.length ? { allowedMentions: { roles: juniorEscalation.roleIds, users: juniorEscalation.userIds } } : {})
-  });
-  if (requiresApproval) {
-    await postApprovalRequest(db, input.guild, record);
+    if (requiresApproval) {
+      await postApprovalRequest(db, input.guild, record);
+    }
   }
   if (strikes > 0) {
     await maybePostStrikeAlert(db, input.guild, record);
@@ -527,20 +531,17 @@ export function getStrikeTotal(db: AppDatabase, guildId: string, targetUserId: s
   );
 }
 
+function isJuniorOnlyMod(db: AppDatabase, member: GuildMember): boolean {
+  const roles = db.listStaffRoles(member.guild.id);
+  const hasRoleKey = (key: string) => roles.some((role) => role.key === key && member.roles.cache.has(role.roleId));
+  return hasRoleKey("juniorMod") && !hasRoleKey("mod") && !hasRoleKey("seniorMod") && !hasRoleKey("headMod") && !hasRoleKey("communityManager");
+}
+
 function getJuniorEscalation(db: AppDatabase, member: GuildMember, actionName: string) {
   const isOther = actionName === "other" || actionName === "case-note";
-
-  const roles = db.listStaffRoles(member.guild.id);
   const config = db.getGuildConfig(member.guild.id);
-  const hasRoleKey = (key: string) =>
-    roles.some((role) => role.key === key && member.roles.cache.has(role.roleId));
-  const juniorOnly =
-    hasRoleKey("juniorMod") &&
-    !hasRoleKey("mod") &&
-    !hasRoleKey("seniorMod") &&
-    !hasRoleKey("headMod") &&
-    !hasRoleKey("communityManager");
-  if (!juniorOnly) return null;
+  const roles = db.listStaffRoles(member.guild.id);
+  if (!isJuniorOnlyMod(db, member)) return null;
 
   let roleIds: string[] = [];
   let userIds: string[] = [];
@@ -714,6 +715,230 @@ export async function refreshApprovalChannel(db: AppDatabase, guild: Guild): Pro
     }
   }
   return count;
+}
+
+// ── Junior Mod Review System ────────────────────────────────────────────────
+
+function buildJuniorReviewEmbed(
+  record: ModerationCase,
+  status: "pending" | "approved" | "denied",
+  opts: { reviewerUserId?: string; denialReason?: string } = {}
+) {
+  const statusColor = status === "approved" ? 0x2ecc71 : status === "denied" ? 0xe74c3c : 0xf39c12;
+  const statusText = status === "approved" ? "✅ Approved" : status === "denied" ? "❌ Denied" : "⏳ Pending Review";
+  const information = [
+    `Reason: ${record.reason}`,
+    `Evidence: ${record.evidence ?? "None"}`,
+    `Notes: ${record.notes ?? "None"}`,
+    record.punishmentLength ? `Punishment Length: ${record.punishmentLength}` : null,
+    record.ticketId ? `Ticket ID: ${record.ticketId}` : null,
+    record.transcriptUrl ? `Transcript: ${transcriptFieldValue(record.transcriptUrl)}` : null,
+    record.mediaLinks.length > 0 ? `Media: ${record.mediaLinks.map((l) => l.label).join(", ")}` : null
+  ].filter(Boolean);
+
+  const fields: { name: string; value: string; inline?: boolean }[] = [
+    { name: "Status", value: statusText, inline: true },
+    { name: "Junior Moderator", value: `<@${record.moderatorUserId}>`, inline: true },
+    { name: "Action", value: record.actionDisplayName ?? record.actionName, inline: true },
+    { name: "Target", value: truncate(formatCaseTarget(record), 1000), inline: false },
+    { name: "Information", value: truncate(information.join("\n"), 1000), inline: false }
+  ];
+  if (opts.reviewerUserId) fields.push({ name: "Reviewed By", value: `<@${opts.reviewerUserId}>`, inline: true });
+  if (opts.denialReason) fields.push({ name: "Denial Reason", value: truncate(opts.denialReason, 500), inline: false });
+
+  return new EmbedBuilder()
+    .setTitle(`Junior Mod Review — ${record.actionDisplayName ?? record.actionName} — Case #${record.id}`)
+    .setColor(statusColor)
+    .addFields(fields)
+    .setTimestamp();
+}
+
+function buildJuniorReviewComponents(caseId: number) {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`junior_review:approve:${caseId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`junior_review:deny:${caseId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
+    )
+  ];
+}
+
+async function postJuniorReviewRequest(
+  db: AppDatabase,
+  guild: Guild,
+  record: ModerationCase,
+  escalation: { roleIds: string[]; userIds: string[]; mentions: string }
+) {
+  const config = db.getGuildConfig(guild.id);
+  const embed = buildJuniorReviewEmbed(record, "pending");
+  const components = buildJuniorReviewComponents(record.id);
+  const msg = await postToConfiguredChannel(guild, config.juniorHelpChannelId, {
+    content: `${escalation.mentions} A Junior Moderator has submitted a log for review.`,
+    embeds: [embed],
+    components,
+    allowedMentions: { roles: escalation.roleIds, users: escalation.userIds }
+  });
+  if (msg) {
+    db.run("UPDATE moderation_cases SET junior_review_message_id = ? WHERE guild_id = ? AND id = ?", msg.id, guild.id, record.id);
+  }
+}
+
+export async function resubmitJuniorReviewCase(db: AppDatabase, guild: Guild, record: ModerationCase, moderator: GuildMember) {
+  const escalation = getJuniorEscalation(db, moderator, record.actionName);
+  if (!escalation) return;
+  await postJuniorReviewRequest(db, guild, record, escalation);
+}
+
+export async function handleJuniorReviewButton(db: AppDatabase, interaction: ButtonInteraction): Promise<boolean> {
+  if (!interaction.customId.startsWith("junior_review:")) return false;
+  if (!interaction.guild) return false;
+
+  const [, action, caseIdStr] = interaction.customId.split(":");
+  const caseId = parseInt(caseIdStr, 10);
+  if (isNaN(caseId) || (action !== "approve" && action !== "deny")) return false;
+
+  const guildMember = interaction.member as GuildMember;
+  const tier = getStaffTier(db, guildMember);
+  if (tier === "junior" || tier === null) {
+    await interaction.reply({ content: "Junior Moderators cannot approve or deny logs.", ephemeral: true });
+    return true;
+  }
+
+  const record = db.getCase(interaction.guild.id, caseId);
+  if (!record) {
+    await interaction.reply({ content: `Case #${caseId} was not found.`, ephemeral: true });
+    return true;
+  }
+  if (record.juniorReviewStatus !== "pending") {
+    await interaction.reply({ content: `Case #${caseId} has already been ${record.juniorReviewStatus ?? "processed"}.`, ephemeral: true });
+    return true;
+  }
+
+  if (action === "approve") {
+    const config = db.getGuildConfig(interaction.guild.id);
+    const timestamp = nowIso();
+    db.transaction(() => {
+      db.run(
+        "UPDATE moderation_cases SET junior_review_status = 'approved', updated_at = ? WHERE guild_id = ? AND id = ?",
+        timestamp, interaction.guild!.id, caseId
+      );
+      if (config.pointsEnabled && record.awardedPointsMilli !== 0) {
+        db.run(
+          `INSERT INTO point_ledger (guild_id, moderator_user_id, case_id, amount_milli, reason, type, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, 'award', ?, ?)`,
+          interaction.guild!.id, record.moderatorUserId, caseId, record.awardedPointsMilli,
+          `Case #${caseId}: ${record.actionDisplayName ?? record.actionName}`,
+          interaction.user.id, timestamp
+        );
+      }
+    });
+
+    const config2 = db.getGuildConfig(interaction.guild.id);
+    const appealChannel = record.actionName === "appeal" ? config2.appealLogChannelId : null;
+    const logChannel = appealChannel ?? db.getActionLogChannelId(interaction.guild.id, record.actionName) ?? config2.actionLogChannelId;
+    const logEmbed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
+    const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+    await postToConfiguredChannel(interaction.guild, logChannel, {
+      content: `Junior Mod <@${record.moderatorUserId}> ticket verified by Moderator <@${interaction.user.id}>`,
+      embeds: [logEmbed],
+      ...(linkComponents.length > 0 ? { components: linkComponents } : {}),
+      allowedMentions: { users: [record.moderatorUserId, interaction.user.id] }
+    });
+
+    await interaction.update({
+      embeds: [buildJuniorReviewEmbed(record, "approved", { reviewerUserId: interaction.user.id })],
+      components: []
+    });
+  } else {
+    const modal = new ModalBuilder()
+      .setCustomId(`junior_deny_reason:${caseId}`)
+      .setTitle("Deny Log — Enter Reason")
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("reason")
+            .setLabel("Reason for denial (required)")
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+            .setMaxLength(1000)
+        )
+      );
+    await interaction.showModal(modal);
+  }
+
+  return true;
+}
+
+export async function handleJuniorReviewModal(db: AppDatabase, interaction: ModalSubmitInteraction): Promise<ModerationCase | false> {
+  if (!interaction.customId.startsWith("junior_deny_reason:")) return false;
+  if (!interaction.guild) return false;
+
+  const caseId = parseInt(interaction.customId.split(":")[1], 10);
+  if (isNaN(caseId)) return false;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const reason = interaction.fields.getTextInputValue("reason").trim();
+  const record = db.getCase(interaction.guild.id, caseId);
+  if (!record || record.juniorReviewStatus !== "pending") {
+    await interaction.editReply("This case cannot be denied right now.");
+    return false;
+  }
+
+  const config = db.getGuildConfig(interaction.guild.id);
+  db.run(
+    "UPDATE moderation_cases SET junior_review_status = 'denied', updated_at = ? WHERE guild_id = ? AND id = ?",
+    nowIso(), interaction.guild.id, caseId
+  );
+
+  if (record.juniorReviewMessageId && config.juniorHelpChannelId) {
+    const channel = await getTextChannel(interaction.guild, config.juniorHelpChannelId);
+    if (channel) {
+      const msg = await channel.messages.fetch(record.juniorReviewMessageId).catch(() => null);
+      if (msg) {
+        await msg.edit({
+          embeds: [buildJuniorReviewEmbed(record, "denied", { reviewerUserId: interaction.user.id, denialReason: reason })],
+          components: []
+        }).catch(() => null);
+      }
+    }
+  }
+
+  const juniorUser = await interaction.client.users.fetch(record.moderatorUserId).catch(() => null);
+  if (juniorUser) {
+    const dmEmbed = new EmbedBuilder()
+      .setTitle("❌ Log Denied")
+      .setColor(0xe74c3c)
+      .setDescription(`Your log was reviewed and denied by <@${interaction.user.id}>.`)
+      .addFields(
+        { name: "Case", value: `#${record.id} — ${record.actionDisplayName ?? record.actionName}`, inline: true },
+        { name: "Target", value: truncate(formatCaseTarget(record), 500), inline: true },
+        { name: "Reason for Denial", value: truncate(reason, 1000), inline: false },
+        {
+          name: "Your Log Details",
+          value: truncate(
+            [
+              `Reason: ${record.reason}`,
+              `Evidence: ${record.evidence ?? "None"}`,
+              `Notes: ${record.notes ?? "None"}`,
+              record.punishmentLength ? `Punishment: ${record.punishmentLength}` : null,
+              record.ticketId ? `Ticket ID: ${record.ticketId}` : null
+            ].filter(Boolean).join("\n"),
+            800
+          ),
+          inline: false
+        },
+        {
+          name: "How to Edit & Resubmit",
+          value: "Run `/log` in the server. Your denied log will be pre-loaded for editing — make your changes and submit again.",
+          inline: false
+        }
+      )
+      .setTimestamp();
+    await juniorUser.send({ embeds: [dmEmbed] }).catch(() => null);
+  }
+
+  await interaction.editReply(`Case #${caseId} denied. The Junior Moderator has been notified.`);
+  return record;
 }
 
 async function maybePostFastPointsAlert(db: AppDatabase, guild: Guild, record: ModerationCase) {

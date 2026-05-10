@@ -432,6 +432,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     ticket_alert_channel_id: getTextChannelOption(interaction, "ticket_alerts")?.id ?? actionLogUpdates.find((update) => update.actionName === "ticket")?.channel.id,
     appeal_log_channel_id: getTextChannelOption(interaction, "logappeal")?.id ?? actionLogUpdates.find((update) => update.actionName === "appeal")?.channel.id,
     approval_channel_id: getTextChannelOption(interaction, "approval_channel")?.id,
+    junior_help_channel_id: getTextChannelOption(interaction, "junior_help")?.id,
     owner_user_id: interaction.options.getUser("owner")?.id,
     ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined
   };

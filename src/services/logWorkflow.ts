@@ -18,8 +18,8 @@ import {
 } from "discord.js";
 import type { Attachment, Message, TextChannel } from "discord.js";
 import type { AppDatabase } from "../db.js";
-import { buildCaseLogEmbed, createCase, effectiveActionPoints, formatLoggedActionName, type CaseTarget } from "./cases.js";
-import type { CaseMediaLink } from "../types.js";
+import { buildCaseLogEmbed, createCase, effectiveActionPoints, formatLoggedActionName, resubmitJuniorReviewCase, type CaseTarget } from "./cases.js";
+import type { CaseMediaLink, ModerationCase } from "../types.js";
 import { formatPoints, truncate } from "../utils/format.js";
 import { caseLinkComponents, getTextChannel } from "../utils/discord.js";
 import { getStaffTier } from "../utils/discord.js";
@@ -56,6 +56,7 @@ type LogDraft = {
   mediaCaptureEnabled: boolean;
   happenedAt: string | null;
   isHeadMod: boolean;
+  editCaseId: number | null;
   createdAt: number;
   updatedAt: number;
   timeout: NodeJS.Timeout | null;
@@ -81,6 +82,51 @@ let draftsDir = "";
 
 type SerializedDraft = Omit<LogDraft, "timeout" | "editReply">;
 
+export function injectDraftFromDeniedCase(record: ModerationCase) {
+  const existingId = sessionsByUser.get(sessionUserKey(record.guildId, record.moderatorUserId));
+  if (existingId) {
+    const existing = sessions.get(existingId);
+    if (existing?.timeout) clearTimeout(existing.timeout);
+    sessions.delete(existingId);
+  }
+  const draft: LogDraft = {
+    id: randomUUID().replace(/-/g, "").slice(0, 12),
+    guildId: record.guildId,
+    userId: record.moderatorUserId,
+    channelId: null,
+    stage: "fields",
+    actionName: record.actionName,
+    actionDisplayName: record.actionDisplayName,
+    appealType: record.appealType,
+    appealResult: record.appealResult,
+    punishmentLength: record.punishmentLength,
+    targetInfo: {
+      robloxUsername: record.robloxUsername,
+      discordUsername: record.discordUsername,
+      robloxId: record.robloxId,
+      discordId: record.discordId
+    },
+    reason: record.reason,
+    evidence: record.evidence,
+    notes: record.notes,
+    noAction: record.isNoAction,
+    ticketId: record.ticketId,
+    transcriptUrl: record.transcriptUrl,
+    mediaLinks: record.mediaLinks,
+    mediaCaptureEnabled: false,
+    happenedAt: null,
+    isHeadMod: false,
+    editCaseId: record.id,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    timeout: null,
+    editReply: null
+  };
+  sessions.set(draft.id, draft);
+  sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
+  saveDraftToDisk(draft);
+}
+
 export function initDraftPersistence(dir: string) {
   draftsDir = dir;
   fs.mkdirSync(dir, { recursive: true });
@@ -103,7 +149,8 @@ function saveDraftToDisk(draft: LogDraft) {
       notes: draft.notes, noAction: draft.noAction, ticketId: draft.ticketId,
       transcriptUrl: draft.transcriptUrl, mediaLinks: draft.mediaLinks,
       mediaCaptureEnabled: draft.mediaCaptureEnabled, happenedAt: draft.happenedAt,
-      isHeadMod: draft.isHeadMod, createdAt: draft.createdAt, updatedAt: draft.updatedAt
+      isHeadMod: draft.isHeadMod, editCaseId: draft.editCaseId,
+      createdAt: draft.createdAt, updatedAt: draft.updatedAt
     };
     fs.writeFileSync(draftFilePath(draft.guildId, draft.userId), JSON.stringify(data), "utf8");
   } catch {
@@ -443,6 +490,7 @@ function createDraft(guildId: string, userId: string, channelId: string | null, 
     mediaCaptureEnabled: false,
     happenedAt: null,
     isHeadMod,
+    editCaseId: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     timeout: null,
@@ -667,7 +715,9 @@ function fieldsComponents(draft: LogDraft, disabled = false, db?: AppDatabase) {
   const appealComplete = Boolean(draft.appealResult);
 
   const row1Buttons = [
-    new ButtonBuilder().setCustomId(`log:${draft.id}:modal:target`).setLabel("Target").setStyle(requiredStyle(targetComplete)).setDisabled(disabled),
+    ...(draft.editCaseId
+      ? []
+      : [new ButtonBuilder().setCustomId(`log:${draft.id}:modal:target`).setLabel("Target").setStyle(requiredStyle(targetComplete)).setDisabled(disabled)]),
     new ButtonBuilder().setCustomId(`log:${draft.id}:modal:evidence`).setLabel("Evidence").setStyle(requiredStyle(evidenceComplete, evidenceRequired)).setDisabled(disabled),
     new ButtonBuilder().setCustomId(`log:${draft.id}:modal:info`).setLabel("Info").setStyle(ButtonStyle.Primary).setDisabled(disabled),
     new ButtonBuilder().setCustomId(`log:${draft.id}:modal:details`).setLabel("Details").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
@@ -789,6 +839,11 @@ function saveModalFields(draft: LogDraft, modalType: string, interaction: ModalS
 }
 
 async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draft: LogDraft) {
+  if (draft.editCaseId) {
+    await resubmitEditedDraft(db, interaction, draft);
+    return;
+  }
+
   const missing = missingRequiredFields(db, draft);
   if (missing.length > 0) {
     await interaction.reply({ content: `Finish the required fields before submitting: ${missing.join(", ")}.`, ephemeral: true });
@@ -830,6 +885,54 @@ async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draf
     content: pointsEnabled ? `Submitted case #${record.id} for ${formatPoints(record.awardedPointsMilli)} points.` : `Submitted case #${record.id}.`,
     embeds: [buildCaseLogEmbed(record, { showPoints: pointsEnabled })],
     components: caseLinkComponents(record.transcriptUrl, record.mediaLinks)
+  });
+}
+
+async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteraction, draft: LogDraft) {
+  const caseId = draft.editCaseId!;
+  const missing = missingRequiredFields(db, draft);
+  if (missing.length > 0) {
+    await interaction.reply({ content: `Finish the required fields before resubmitting: ${missing.join(", ")}.`, ephemeral: true });
+    return;
+  }
+
+  const evidence = draft.evidence
+    ?? (draft.mediaLinks.length > 0 ? `Media evidence: ${draft.mediaLinks.map((l) => l.label).join(", ")}` : null)
+    ?? (draft.transcriptUrl ? "See transcript." : null);
+
+  const config = db.getGuildConfig(draft.guildId);
+  const archivedLinks = config.evidenceArchiveChannelId && draft.mediaLinks.length > 0
+    ? await archiveMediaLinks(interaction.guild!, config.evidenceArchiveChannelId, draft.mediaLinks, interaction.user.id)
+    : draft.mediaLinks;
+
+  const timestamp = new Date().toISOString();
+  db.run(
+    `UPDATE moderation_cases SET
+      reason = ?, evidence = ?, notes = ?, ticket_id = ?, transcript_url = ?,
+      media_links_json = ?, punishment_length = ?, is_no_action = ?,
+      appeal_type = ?, appeal_result = ?,
+      junior_review_status = 'pending', updated_at = ?
+     WHERE guild_id = ? AND id = ?`,
+    draft.reason ?? "No reason provided.", evidence, draft.notes ?? null,
+    draft.ticketId ?? null, draft.transcriptUrl ?? null,
+    archivedLinks.length > 0 ? JSON.stringify(archivedLinks) : null,
+    draft.punishmentLength ?? null, draft.noAction ? 1 : 0,
+    draft.appealType ?? null, draft.appealResult ?? null,
+    timestamp, draft.guildId, caseId
+  );
+
+  const updatedRecord = db.getCase(draft.guildId, caseId);
+  if (!updatedRecord) {
+    await interaction.reply({ content: "Failed to update case.", ephemeral: true });
+    return;
+  }
+
+  await resubmitJuniorReviewCase(db, interaction.guild!, updatedRecord, interaction.member as GuildMember);
+  removeDraft(draft);
+  await interaction.update({
+    content: `Case #${caseId} resubmitted for review.`,
+    embeds: [buildCaseLogEmbed(updatedRecord, { showPoints: false })],
+    components: []
   });
 }
 
@@ -993,8 +1096,26 @@ function nextMediaLabel(draft: LogDraft, kind: CaseMediaLink["kind"]) {
 }
 
 function recoveryPromptPayload(draft: LogDraft) {
-  const ageMins = Math.round((Date.now() - draft.updatedAt) / 60_000);
   const actionLabel = draft.actionDisplayName ?? draft.actionName ?? "Not selected";
+  const targetLabel = draft.targetInfo.robloxUsername ?? draft.targetInfo.discordUsername ?? "Not set";
+
+  if (draft.editCaseId) {
+    const embed = new EmbedBuilder()
+      .setTitle("✏️ Denied Log Ready to Edit")
+      .setColor(0xe74c3c)
+      .setDescription(
+        `Your log (Case #${draft.editCaseId}) was denied. Your previous details are pre-loaded — edit what needs fixing and resubmit.\n\n` +
+        `**Action:** ${actionLabel}\n` +
+        `**Target:** ${targetLabel}`
+      );
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`log:${draft.id}:recover:resume`).setLabel("Edit & Resubmit").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh Instead").setStyle(ButtonStyle.Secondary)
+    );
+    return { content: "", embeds: [embed], components: [row] };
+  }
+
+  const ageMins = Math.round((Date.now() - draft.updatedAt) / 60_000);
   const embed = new EmbedBuilder()
     .setTitle("⚠️ Unfinished Log Recovered")
     .setColor(colors.voidPurple)
@@ -1002,17 +1123,11 @@ function recoveryPromptPayload(draft: LogDraft) {
       `The bot restarted while you had a log in progress (${ageMins} minute${ageMins !== 1 ? "s" : ""} ago).\n\n` +
       `**Action:** ${actionLabel}\n` +
       `**Stage:** ${draft.stage}\n` +
-      `**Target:** ${draft.targetInfo.robloxUsername ?? draft.targetInfo.discordUsername ?? "Not set"}`
+      `**Target:** ${targetLabel}`
     );
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`log:${draft.id}:recover:resume`)
-      .setLabel("Resume Log")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`log:${draft.id}:recover:fresh`)
-      .setLabel("Start Fresh")
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`log:${draft.id}:recover:resume`).setLabel("Resume Log").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh").setStyle(ButtonStyle.Secondary)
   );
   return { content: "", embeds: [embed], components: [row] };
 }

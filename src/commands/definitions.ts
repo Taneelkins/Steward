@@ -154,6 +154,7 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "logticket", "Ticket log channel."))
         .addChannelOption((option) => textChannelOption(option, "logappeal", "Appeal log channel."))
         .addChannelOption((option) => textChannelOption(option, "approval_channel", "CM approval channel for quota/points review."))
+        .addChannelOption((option) => textChannelOption(option, "junior_help", "Junior Mod review channel (logs posted here for approve/deny before going live)."))
         .addUserOption((option) => option.setName("owner").setDescription("Owner/admin DM target."))
         .addStringOption((option) => option.setName("ticket_tool_bot_id").setDescription("Ticket Tool bot user ID."))
     )
