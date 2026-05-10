@@ -12,7 +12,7 @@ export function readEnv() {
     return {
         discordToken,
         discordClientId,
-        registerCommandsOnStartup: boolFromEnv(process.env.REGISTER_COMMANDS_ON_STARTUP),
+        registerCommandsOnStartup: boolFromEnv(process.env.REGISTER_COMMANDS_ON_STARTUP, true),
         databasePath: path.resolve(cwd, process.env.DATABASE_PATH ?? "./data/mod-ledger.sqlite"),
         backupDir: path.resolve(cwd, process.env.BACKUP_DIR ?? "./backups"),
         exportDir: path.resolve(cwd, process.env.EXPORT_DIR ?? "./exports"),
