@@ -746,13 +746,12 @@ function buildJuniorReviewEmbed(
     .setTimestamp();
 }
 
-function buildJuniorReviewComponents(caseId: number) {
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`junior_review:approve:${caseId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`junior_review:deny:${caseId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
-    )
-  ];
+function buildJuniorReviewComponents(record: ModerationCase) {
+  const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`junior_review:approve:${record.id}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`junior_review:deny:${record.id}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
+  );
+  return [actionRow, ...caseLinkComponents(record.transcriptUrl, record.mediaLinks)];
 }
 
 async function postJuniorReviewRequest(
@@ -763,7 +762,7 @@ async function postJuniorReviewRequest(
 ) {
   const config = db.getGuildConfig(guild.id);
   const embed = buildJuniorReviewEmbed(record, "pending");
-  const components = buildJuniorReviewComponents(record.id);
+  const components = buildJuniorReviewComponents(record);
   const msg = await postToConfiguredChannel(guild, config.juniorHelpChannelId, {
     content: `${escalation.mentions} A Junior Moderator has submitted a log for review.`,
     embeds: [embed],
