@@ -311,6 +311,7 @@ export class AppDatabase {
         alert_channel_id TEXT,
           audit_channel_id TEXT,
           quota_channel_id TEXT,
+          quota_alert_channel_id TEXT,
           staff_registration_channel_id TEXT,
           registration_role_id TEXT,
           ticket_transcript_channel_id TEXT,
@@ -562,6 +563,7 @@ export class AppDatabase {
     this.ensureColumn("guild_configs", "points_enabled", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("guild_configs", "evidence_archive_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "appeal_log_channel_id", "TEXT");
+    this.ensureColumn("guild_configs", "quota_alert_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "junior_escalation_role_ids_json", "TEXT");
     this.ensureColumn("guild_configs", "junior_escalation_user_ids_json", "TEXT");
     this.ensureColumn("guild_configs", "junior_other_escalation_role_ids_json", "TEXT");
@@ -601,6 +603,7 @@ type GuildConfigRow = {
   alert_channel_id: string | null;
   audit_channel_id: string | null;
   quota_channel_id: string | null;
+  quota_alert_channel_id: string | null;
   staff_registration_channel_id: string | null;
   registration_role_id: string | null;
   ticket_transcript_channel_id: string | null;
@@ -736,6 +739,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     alertChannelId: row.alert_channel_id,
     auditChannelId: row.audit_channel_id,
     quotaChannelId: row.quota_channel_id,
+    quotaAlertChannelId: row.quota_alert_channel_id,
     staffRegistrationChannelId: row.staff_registration_channel_id,
     registrationRoleId: row.registration_role_id,
     ticketTranscriptChannelId: row.ticket_transcript_channel_id,

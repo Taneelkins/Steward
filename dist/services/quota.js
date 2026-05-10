@@ -126,15 +126,11 @@ export async function closeQuotaPeriod(db, guild, actorUserId = "system", reason
     db.run("INSERT INTO quota_reports (guild_id, period_start, period_end, status_json, created_at) VALUES (?, ?, ?, ?, ?)", guild.id, report.periodStart, report.periodEnd, JSON.stringify(report.statuses), report.createdAt);
     writeAudit(db, guild.id, actorUserId, "quota.closed", { reason, periodStart: report.periodStart, periodEnd: report.periodEnd });
     const reportEmbed = buildQuotaReportEmbed(report);
-    await postToConfiguredChannel(guild, config.quotaChannelId, {
-        content: "Quota period ended.",
-        embeds: [reportEmbed],
-        allowedMentions: { parse: [] }
-    });
+    const alertChannelId = config.quotaAlertChannelId ?? config.alertChannelId;
     const staffRoleIds = db.listStaffRoles(guild.id).map((role) => role.roleId);
     const mentionRoleIds = staffRoleIds.length > 0 ? staffRoleIds : config.modRoleId ? [config.modRoleId] : [];
-    await postToConfiguredChannel(guild, config.alertChannelId, {
-        content: mentionRoleIds.length > 0 ? `${mentionRoleIds.map((roleId) => `<@&${roleId}>`).join(" ")} quota period ended.` : "Quota period ended.",
+    await postToConfiguredChannel(guild, alertChannelId, {
+        content: mentionRoleIds.length > 0 ? `${mentionRoleIds.map((roleId) => `<@&${roleId}>`).join(" ")} Quota period ended.` : "Quota period ended.",
         embeds: [reportEmbed],
         allowedMentions: mentionRoleIds.length > 0 ? { roles: mentionRoleIds } : { parse: [] }
     });
@@ -143,7 +139,7 @@ export async function closeQuotaPeriod(db, guild, actorUserId = "system", reason
         if (owner) {
             const sent = await safeDm(owner, { embeds: [reportEmbed] });
             if (!sent) {
-                await postToConfiguredChannel(guild, config.alertChannelId, {
+                await postToConfiguredChannel(guild, alertChannelId, {
                     content: `<@${config.ownerUserId}> I could not DM the quota report, so I posted it here.`,
                     embeds: [reportEmbed],
                     allowedMentions: { users: [config.ownerUserId] }
@@ -187,7 +183,7 @@ export async function maybeSendQuotaWarning(db, guild) {
             .setDescription(`Quota ends ${discordTimestamp(config.quotaPeriodEnd, "R")}.`)
             .addFields({ name: "Below or Close", value: truncate(lines, 1000) })
             .setTimestamp();
-        await postToConfiguredChannel(guild, config.quotaChannelId, {
+        await postToConfiguredChannel(guild, config.quotaAlertChannelId ?? config.alertChannelId, {
             content: mentions,
             embeds: [embed],
             allowedMentions: { users: below.map((status) => status.userId) }

@@ -416,6 +416,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     alert_channel_id: getTextChannelOption(interaction, "alerts")?.id,
     audit_channel_id: getTextChannelOption(interaction, "audit")?.id,
     quota_channel_id: getTextChannelOption(interaction, "quota")?.id,
+    quota_alert_channel_id: getTextChannelOption(interaction, "quota_alerts")?.id,
     staff_registration_channel_id: getTextChannelOption(interaction, "staff_registration")?.id,
     ticket_transcript_channel_id: getTextChannelOption(interaction, "ticket_transcripts")?.id,
     ticket_alert_channel_id: getTextChannelOption(interaction, "ticket_alerts")?.id ?? actionLogUpdates.find((update) => update.actionName === "ticket")?.channel.id,

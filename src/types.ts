@@ -7,6 +7,7 @@ export type GuildConfig = {
   alertChannelId: string | null;
   auditChannelId: string | null;
   quotaChannelId: string | null;
+  quotaAlertChannelId: string | null;
   staffRegistrationChannelId: string | null;
   registrationRoleId: string | null;
   ticketTranscriptChannelId: string | null;
