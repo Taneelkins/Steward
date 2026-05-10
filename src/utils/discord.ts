@@ -19,7 +19,7 @@ import { truncate } from "./format.js";
 import { colors } from "./theme.js";
 
 // Bot developer — always has full authority in every server
-const DEV_USER_ID = "1344067550161408060";
+const DEV_USER_ID = "616267913799925782";
 
 export function userLabel(user: User | GuildMember) {
   const raw = "user" in user ? user.user : user;

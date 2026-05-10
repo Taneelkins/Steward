@@ -1372,7 +1372,7 @@ function configEmbed(db: AppDatabase, guildId: string) {
   });
 }
 
-const DEV_USER_ID = "1344067550161408060";
+const DEV_USER_ID = "616267913799925782";
 
 function requireServerOwner(member: GuildMember) {
   if (member.id === DEV_USER_ID) return;
