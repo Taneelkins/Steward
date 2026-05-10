@@ -129,6 +129,7 @@ export async function handleChatInputCommand(interaction, context) {
         }
     }
     catch (error) {
+        console.error(`[${interaction.commandName}] command error:`, error);
         await replyError(interaction, error);
     }
 }
