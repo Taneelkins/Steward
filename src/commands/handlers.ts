@@ -172,6 +172,7 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         await interaction.reply({ content: "Unknown command.", ephemeral: true });
     }
   } catch (error) {
+    console.error(`[${interaction.commandName}] command error:`, error);
     await replyError(interaction, error);
   }
 }
