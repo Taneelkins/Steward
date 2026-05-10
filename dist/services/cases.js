@@ -53,6 +53,10 @@ function caseEmbedColor(record) {
         return record.appealResult === "accepted" ? colors.appealApproved : colors.appealDenied;
     }
     const display = `${record.actionDisplayName ?? record.actionName}`.toLowerCase();
+    if (display.includes("rule break") && display.includes("approved"))
+        return colors.appealApproved;
+    if (display.includes("rule break") && display.includes("denied"))
+        return colors.appealDenied;
     if (display.includes("discord warn"))
         return colors.discordWarn;
     if (display.includes("discord timeout"))

@@ -32,6 +32,7 @@ export function injectDraftFromDeniedCase(record) {
         actionDisplayName: record.actionDisplayName,
         appealType: record.appealType,
         appealResult: record.appealResult,
+        ingameRuleResult: null,
         punishmentLength: record.punishmentLength,
         targetInfo: {
             robloxUsername: record.robloxUsername,
@@ -74,7 +75,8 @@ function saveDraftToDisk(draft) {
             id: draft.id, guildId: draft.guildId, userId: draft.userId,
             channelId: draft.channelId, stage: draft.stage, actionName: draft.actionName,
             actionDisplayName: draft.actionDisplayName, appealType: draft.appealType,
-            appealResult: draft.appealResult, punishmentLength: draft.punishmentLength,
+            appealResult: draft.appealResult, ingameRuleResult: draft.ingameRuleResult,
+            punishmentLength: draft.punishmentLength,
             targetInfo: draft.targetInfo, reason: draft.reason, evidence: draft.evidence,
             notes: draft.notes, noAction: draft.noAction,
             transcriptUrl: draft.transcriptUrl, mediaLinks: draft.mediaLinks,
@@ -127,7 +129,6 @@ const logActions = [
     { id: "strike", label: "Strike", actionName: "strike", displayName: "Strike" },
     { id: "restore", label: "Restore", actionName: "restore", displayName: "Restore" },
     { id: "discord", label: "Discord", actionName: "discord", displayName: "Discord" },
-    { id: "ticket", label: "Ticket", actionName: "ticket", displayName: "Ticket" },
     { id: "other", label: "Other", actionName: "other", displayName: "Other" },
     { id: "appeal", label: "Appeal", actionName: "appeal", displayName: "Appeal" }
 ];
@@ -151,6 +152,9 @@ export function resolveLogAction(value) {
     // Allow "ban" or "ingame" to map to the ingame action
     if (value === "ban" || value === "ingame")
         return logActions.find((a) => a.id === "ingame") ?? null;
+    // "ticket" still resolves for backwards-compat (denied/no-ban rule break logs go through ticket channel)
+    if (value === "ticket")
+        return { id: "ticket", label: "Ticket", actionName: "ticket", displayName: "Ticket" };
     return logActions.find((action) => action.id === value || action.actionName === value) ?? null;
 }
 export async function startInteractiveLog(interaction, db, member) {
@@ -246,7 +250,7 @@ export async function handleLogButton(db, interaction) {
             draft.stage = "discord_type";
         }
         else if (value === "ingame") {
-            draft.stage = "ingame_type";
+            draft.stage = "ingame_subtype";
         }
         else if (value === "appeal") {
             draft.stage = "appeal_type";
@@ -267,12 +271,43 @@ export async function handleLogButton(db, interaction) {
         await interaction.update(previewPayload(db, draft));
         return true;
     }
-    if (action === "ingame_type") {
-        if (value === "ban") {
+    if (action === "ingame_subtype") {
+        if (value === "exploiter") {
+            draft.actionName = "ban";
             draft.actionDisplayName = "Ingame Ban";
-            draft.stage = "confirm";
+            draft.ingameRuleResult = null;
+            draft.stage = "fields";
             await interaction.update(previewPayload(db, draft));
         }
+        else if (value === "rulebreak") {
+            draft.ingameRuleResult = null;
+            draft.stage = "ingame_rule_result";
+            await interaction.update(previewPayload(db, draft));
+        }
+        return true;
+    }
+    if (action === "ingame_rule_result") {
+        if (value === "approved" || value === "denied") {
+            draft.ingameRuleResult = value;
+            draft.stage = "ingame_ban_result";
+            await interaction.update(previewPayload(db, draft));
+        }
+        return true;
+    }
+    if (action === "ingame_ban_result") {
+        const result = draft.ingameRuleResult ?? "approved";
+        const resultLabel = result === "approved" ? "Approved" : "Denied";
+        if (value === "yes") {
+            draft.actionName = "ban";
+            draft.actionDisplayName = `Rule Break Ban - ${resultLabel}`;
+            draft.stage = "confirm";
+        }
+        else if (value === "no") {
+            draft.actionName = "ticket";
+            draft.actionDisplayName = `Rule Break - ${resultLabel}`;
+            draft.stage = "confirm";
+        }
+        await interaction.update(previewPayload(db, draft));
         return true;
     }
     if (action === "appeal_type") {
@@ -305,6 +340,12 @@ export async function handleLogButton(db, interaction) {
         if (draft.stage === "appeal_result") {
             draft.stage = "appeal_type";
         }
+        else if (draft.stage === "ingame_rule_result") {
+            draft.stage = "ingame_subtype";
+        }
+        else if (draft.stage === "ingame_ban_result") {
+            draft.stage = "ingame_rule_result";
+        }
         else if (draft.stage === "fields") {
             draft.stage = "confirm";
         }
@@ -314,6 +355,7 @@ export async function handleLogButton(db, interaction) {
             draft.actionDisplayName = null;
             draft.appealType = null;
             draft.appealResult = null;
+            draft.ingameRuleResult = null;
             draft.mediaCaptureEnabled = false;
         }
         await interaction.update(previewPayload(db, draft));
@@ -406,6 +448,7 @@ function createDraft(guildId, userId, channelId, isHeadMod) {
         actionDisplayName: null,
         appealType: null,
         appealResult: null,
+        ingameRuleResult: null,
         punishmentLength: null,
         targetInfo: {},
         reason: null,
@@ -446,7 +489,9 @@ function stageDescription(draft) {
     switch (draft.stage) {
         case "select": return "Step 1: choose the type of moderation log to create.";
         case "discord_type": return "Step 2: choose the Discord action type.";
-        case "ingame_type": return "Step 2: choose the Ingame action type.";
+        case "ingame_subtype": return "Step 2: what kind of ingame action?";
+        case "ingame_rule_result": return "Step 3: what was the outcome of the rule break report?";
+        case "ingame_ban_result": return `Step 4: did the rule break result in a ban? (Report: ${draft.ingameRuleResult ?? "approved"})`;
         case "appeal_type": return "Step 2: choose what the appeal is for.";
         case "appeal_result": return `Step 3: choose the appeal result for **${draft.appealType ?? "Appeal"}**.`;
         case "confirm": {
@@ -512,7 +557,9 @@ function draftComponents(draft, disabled = false, db) {
     switch (draft.stage) {
         case "select": return selectComponents(draft, disabled);
         case "discord_type": return discordTypeComponents(draft, disabled);
-        case "ingame_type": return ingameTypeComponents(draft, disabled);
+        case "ingame_subtype": return ingameSubtypeComponents(draft, disabled);
+        case "ingame_rule_result": return ingameRuleResultComponents(draft, disabled);
+        case "ingame_ban_result": return ingameBanResultComponents(draft, disabled);
         case "appeal_type": return appealTypeComponents(draft, disabled);
         case "appeal_result": return appealResultComponents(draft, disabled);
         case "confirm": return confirmComponents(draft, disabled);
@@ -545,13 +592,21 @@ function discordTypeComponents(draft, disabled = false) {
         new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled), new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled))
     ];
 }
-function ingameTypeComponents(draft, disabled = false) {
+function ingameSubtypeComponents(draft, disabled = false) {
     return [
-        new ActionRowBuilder().addComponents(new ButtonBuilder()
-            .setCustomId(`log:${draft.id}:ingame_type:ban`)
-            .setLabel("Ban")
-            .setStyle(ButtonStyle.Danger)
-            .setDisabled(disabled)),
+        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:ingame_subtype:exploiter`).setLabel("Exploiter").setStyle(ButtonStyle.Danger).setDisabled(disabled), new ButtonBuilder().setCustomId(`log:${draft.id}:ingame_subtype:rulebreak`).setLabel("Rule Break").setStyle(ButtonStyle.Primary).setDisabled(disabled)),
+        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled), new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled))
+    ];
+}
+function ingameRuleResultComponents(draft, disabled = false) {
+    return [
+        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:ingame_rule_result:approved`).setLabel("Approved").setStyle(ButtonStyle.Success).setDisabled(disabled), new ButtonBuilder().setCustomId(`log:${draft.id}:ingame_rule_result:denied`).setLabel("Denied").setStyle(ButtonStyle.Danger).setDisabled(disabled)),
+        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled), new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled))
+    ];
+}
+function ingameBanResultComponents(draft, disabled = false) {
+    return [
+        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:ingame_ban_result:yes`).setLabel("Yes — Resulted in a Ban").setStyle(ButtonStyle.Danger).setDisabled(disabled), new ButtonBuilder().setCustomId(`log:${draft.id}:ingame_ban_result:no`).setLabel("No — No Ban").setStyle(ButtonStyle.Secondary).setDisabled(disabled)),
         new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled), new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled))
     ];
 }
