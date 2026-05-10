@@ -376,6 +376,12 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
   await requireAdmin(db, member);
   const guild = interaction.guild!;
   const subcommand = interaction.options.getSubcommand();
+
+  if (subcommand === "check") {
+    await handleConfigCheck(interaction, db, guild.id);
+    return;
+  }
+
   if (subcommand === "roles") {
     const roleUpdates = readConfigRoleUpdates(interaction);
     for (const update of roleUpdates.staffRoles) {
@@ -1060,11 +1066,22 @@ function readConfigRoleUpdates(interaction: ChatInputCommandInteraction) {
   const staffRoles = staffRoleOptions
     .map(({ key, option }) => ({ key, role: interaction.options.getRole(option) as Role | null }))
     .filter((update): update is { key: StaffRoleKey; role: Role } => Boolean(update.role));
+
+  // Legacy: mod_role = normal mod tier, admin_role = community manager tier
+  const legacyMod = interaction.options.getRole("mod_role") as Role | null;
+  const legacyAdmin = interaction.options.getRole("admin_role") as Role | null;
+  if (legacyMod && !staffRoles.some((r) => r.key === "mod")) {
+    staffRoles.push({ key: "mod", role: legacyMod });
+  }
+  if (legacyAdmin && !staffRoles.some((r) => r.key === "communityManager")) {
+    staffRoles.push({ key: "communityManager", role: legacyAdmin });
+  }
+
   return {
     staffRoles,
     canRegisterRole: interaction.options.getRole("can_register_role") as Role | null,
-    legacyModRole: (interaction.options.getRole("mod_role") ?? interaction.options.getRole("normal_mod_role") ?? interaction.options.getRole("junior_mod_role")) as Role | null,
-    legacyAdminRole: (interaction.options.getRole("admin_role") ?? interaction.options.getRole("head_mod_role") ?? interaction.options.getRole("community_manager_role")) as Role | null
+    legacyModRole: (legacyMod ?? interaction.options.getRole("normal_mod_role") ?? interaction.options.getRole("junior_mod_role")) as Role | null,
+    legacyAdminRole: (legacyAdmin ?? interaction.options.getRole("head_mod_role") ?? interaction.options.getRole("community_manager_role")) as Role | null
   };
 }
 
@@ -1306,6 +1323,71 @@ async function handleUpdateBot(interaction: ChatInputCommandInteraction, member:
   const summary = [pullOutput.trim(), buildOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);
   await interaction.editReply(`Update complete. Restarting bot...\n\`\`\`\n${summary}\n\`\`\``);
   setTimeout(() => process.exit(75), 1500);
+}
+
+async function handleConfigCheck(interaction: ChatInputCommandInteraction, db: AppDatabase, guildId: string) {
+  const config = db.getGuildConfig(guildId);
+  const staffRoles = db.listStaffRoles(guildId);
+  const tierLabels: Array<{ key: string; label: string }> = [
+    { key: "staff", label: "Staff" },
+    { key: "communityManager", label: "Community Manager" },
+    { key: "headMod", label: "Head Mod" },
+    { key: "seniorMod", label: "Senior Mod" },
+    { key: "mod", label: "Normal Mod" },
+    { key: "juniorMod", label: "Junior Mod" }
+  ];
+
+  const ch = (id: string | null | undefined, label: string, optional = false) =>
+    id ? `✅ ${label}: <#${id}>` : optional ? `⬜ ${label}: Not set (optional)` : `❌ ${label}: Not set`;
+  const role = (id: string | null | undefined, label: string, optional = false) =>
+    id ? `✅ ${label}: <@&${id}>` : optional ? `⬜ ${label}: Not set (optional)` : `❌ ${label}: Not set`;
+  const user = (id: string | null | undefined, label: string) =>
+    id ? `✅ ${label}: <@${id}>` : `❌ ${label}: Not set`;
+  const bool = (value: boolean, label: string) =>
+    value ? `✅ ${label}` : `❌ ${label}: Not configured`;
+
+  const channelLines = [
+    ch(config.actionLogChannelId, "Action Log (fallback)"),
+    ch(db.getActionLogChannelId(guildId, "ban"), "Ingame Log"),
+    ch(config.appealLogChannelId, "Appeal Log"),
+    ch(config.alertChannelId, "Alerts"),
+    ch(config.auditChannelId, "Audit Log"),
+    ch(config.quotaChannelId, "Quota Board"),
+    ch(config.quotaAlertChannelId, "Quota Alerts"),
+    ch(config.staffRegistrationChannelId, "Staff Registration"),
+    ch(config.ticketTranscriptChannelId, "Ticket Transcripts", true),
+    ch(config.approvalChannelId, "CM Approval", true)
+  ];
+  const roleLines = [
+    ...tierLabels.map(({ key, label }) => {
+      const found = staffRoles.find((r) => r.key === key);
+      return found ? `✅ ${label}: <@&${found.roleId}>` : `❌ ${label}: Not set`;
+    }),
+    role(config.registrationRoleId, "Can Register"),
+    config.juniorEscalationRoleIds.length > 0 ? `✅ Junior Escalation: configured` : `⬜ Junior Escalation: Not set (optional)`
+  ];
+  const otherLines = [
+    user(config.ownerUserId, "Owner DM"),
+    bool(config.quotaEnabled, "Quota Enabled"),
+    bool(Boolean(config.quotaPeriodStart && config.quotaPeriodEnd), "Quota Period Active")
+  ];
+
+  const allLines = [...channelLines, ...roleLines, ...otherLines];
+  const missing = allLines.filter((l) => l.startsWith("❌")).length;
+  const title = missing === 0 ? "✅ All critical configs are set" : `⚠️ ${missing} critical config${missing !== 1 ? "s" : ""} not set`;
+
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setColor(missing === 0 ? 0x2ecc71 : 0xe67e22)
+    .addFields(
+      { name: "Channels", value: channelLines.join("\n"), inline: false },
+      { name: "Roles", value: roleLines.join("\n"), inline: false },
+      { name: "Other", value: otherLines.join("\n"), inline: false }
+    )
+    .setFooter({ text: "⬜ = optional  ❌ = missing  ✅ = configured" })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
 async function handleRefresh(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {

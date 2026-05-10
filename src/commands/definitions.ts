@@ -163,6 +163,11 @@ function configCommand() {
         .setDescription("Configure bot behavior settings.")
         .addBooleanOption((option) => option.setName("interactive_log").setDescription("Enable /log button workflow."))
     )
+    .addSubcommand((sub) =>
+      sub
+        .setName("check")
+        .setDescription("Show which configs are set and which are missing.")
+    )
     .setDefaultMemberPermissions(communityDefault);
 }
 
@@ -386,7 +391,7 @@ function quotaCommand(pointsEnabled: boolean) {
         )
         .addSubcommand((sub) => sub.setName("list").setDescription("List active quota exemptions."))
     )
-    .setDefaultMemberPermissions(headDefault);
+    .setDefaultMemberPermissions(juniorDefault);
 }
 
 function ticketlogCommand() {

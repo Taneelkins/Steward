@@ -31,7 +31,7 @@ export const commandAccess: Record<string, CommandAccess> = {
   addpoints: "head",
   removepoints: "head",
   multiplier: "head",
-  quota: "head",
+  quota: "junior",
   ticketlog: "head",
   audit: "head",
   setup: "owner",

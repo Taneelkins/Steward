@@ -1,6 +1,6 @@
 import { ChannelType, EmbedBuilder } from "discord.js";
 import { formatPoints } from "../utils/format.js";
-import { isModMember, postToConfiguredChannel, safeDm, ticketActionButtons, transcriptFieldValue, transcriptLinkComponents } from "../utils/discord.js";
+import { isModMember, postToConfiguredChannel, ticketActionButtons, transcriptFieldValue, transcriptLinkComponents } from "../utils/discord.js";
 import { addHours, discordTimestamp, nowIso } from "../utils/time.js";
 import { writeAuditAndPost } from "./audit.js";
 import { createCase } from "./cases.js";
@@ -103,36 +103,8 @@ export function buildPendingTicketEmbed(pending) {
 export async function processOverdueTickets(db, guild) {
     const overdue = db.all("SELECT * FROM pending_ticket_logs WHERE guild_id = ? AND status IN ('pending', 'needs_review') AND due_at <= ?", guild.id, nowIso());
     for (const row of overdue) {
+        // Mark as overdue in the DB; no alert is sent (alerts disabled).
         db.run("UPDATE pending_ticket_logs SET status = 'overdue' WHERE guild_id = ? AND id = ?", guild.id, row.id);
-        const pending = db.getPendingTicket(guild.id, row.id);
-        if (!pending)
-            continue;
-        const config = db.getGuildConfig(guild.id);
-        const embed = buildPendingTicketEmbed({ ...pending, status: "overdue" });
-        embed.setTitle("Ticket Log Overdue").setColor(0xe74c3c);
-        // Try the closed ticket channel first; fall back to ticket alert if it's gone.
-        const overdueClosedChannel = await resolveClosedChannel(guild, pending);
-        if (overdueClosedChannel) {
-            await overdueClosedChannel.send({
-                content: "This ticket log is overdue and was not logged within 12 hours.",
-                embeds: [embed],
-                components: [ticketActionButtons(pending.id, pending.transcriptUrl)],
-                allowedMentions: { parse: [] }
-            }).catch(() => null);
-        }
-        if (!overdueClosedChannel) {
-            await postToConfiguredChannel(guild, config.ticketAlertChannelId ?? config.alertChannelId, {
-                content: "A ticket transcript was not logged within 12 hours and may need admin review.",
-                embeds: [embed],
-                components: transcriptLinkComponents(pending.transcriptUrl),
-                allowedMentions: { parse: [] }
-            });
-        }
-        if (config.ownerUserId) {
-            const owner = await guild.client.users.fetch(config.ownerUserId).catch(() => null);
-            if (owner)
-                await safeDm(owner, { embeds: [embed], components: transcriptLinkComponents(pending.transcriptUrl) });
-        }
     }
 }
 export async function handleTicketButton(db, interaction) {

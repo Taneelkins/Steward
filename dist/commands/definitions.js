@@ -131,6 +131,9 @@ function configCommand() {
         .setName("behavior")
         .setDescription("Configure bot behavior settings.")
         .addBooleanOption((option) => option.setName("interactive_log").setDescription("Enable /log button workflow.")))
+        .addSubcommand((sub) => sub
+        .setName("check")
+        .setDescription("Show which configs are set and which are missing."))
         .setDefaultMemberPermissions(communityDefault);
 }
 function modshopCommand() {
@@ -308,7 +311,7 @@ function quotaCommand(pointsEnabled) {
         .setDescription("Remove a quota exemption.")
         .addUserOption((option) => option.setName("moderator").setDescription("Moderator.").setRequired(true)))
         .addSubcommand((sub) => sub.setName("list").setDescription("List active quota exemptions.")))
-        .setDefaultMemberPermissions(headDefault);
+        .setDefaultMemberPermissions(juniorDefault);
 }
 function ticketlogCommand() {
     return new SlashCommandBuilder()
