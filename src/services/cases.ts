@@ -1111,7 +1111,7 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
     const dmLines = [
       `**You have been ${actionLabel}${punishment.kind !== "warn" ? ` in ${linkedGuild.name}` : ""}.** `,
       ``,
-      `**Action:** ${record.actionDisplayName ?? record.actionName}`,
+      `**Moderator:** ${record.moderatorUsername} (${record.moderatorUserId})`,
       `**Reason:** ${record.reason}`,
       record.evidence ? `**Evidence:** ${record.evidence}` : null,
       punishment.kind === "timeout" ? `**Duration:** ${record.punishmentLength ?? "unknown"}` : null,
