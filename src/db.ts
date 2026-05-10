@@ -672,6 +672,7 @@ export class AppDatabase {
     this.ensureColumn("guild_configs", "staff_registration_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "registration_role_id", "TEXT");
     this.ensureColumn("guild_configs", "interactive_log_enabled", "INTEGER NOT NULL DEFAULT 1");
+    this.ensureColumn("guild_configs", "approval_enabled", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("guild_configs", "points_enabled", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("guild_configs", "evidence_archive_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "appeal_log_channel_id", "TEXT");
@@ -744,6 +745,7 @@ type GuildConfigRow = {
   junior_other_escalation_role_ids_json: string | null;
   junior_other_escalation_user_ids_json: string | null;
   interactive_log_enabled: number;
+  approval_enabled: number;
   points_enabled: number;
   timezone: string;
   quota_required_logs: number;
@@ -913,6 +915,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     juniorOtherEscalationRoleIds: parseStringList(row.junior_other_escalation_role_ids_json),
     juniorOtherEscalationUserIds: parseStringList(row.junior_other_escalation_user_ids_json),
     interactiveLogEnabled: row.interactive_log_enabled !== 0,
+    approvalEnabled: row.approval_enabled !== 0,
     pointsEnabled: row.points_enabled !== 0,
     timezone: row.timezone,
     quotaRequiredLogs: row.quota_required_logs,

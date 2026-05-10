@@ -173,6 +173,7 @@ function configCommand() {
         .setName("behavior")
         .setDescription("Configure bot behavior settings.")
         .addBooleanOption((option) => option.setName("interactive_log").setDescription("Enable /log button workflow."))
+        .addBooleanOption((option) => option.setName("cm_approval").setDescription("Enable CM approval requirement for non-CM logs (default: on)."))
         .addStringOption((option) => option.setName("linked_server").setDescription("Guild ID of the linked community server for cross-server punishment enforcement."))
         .addStringOption((option) => option.setName("moderation_invite").setDescription("Permanent invite link to include in punishment DMs (e.g. https://discord.gg/...)."))
     )

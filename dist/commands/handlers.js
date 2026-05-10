@@ -370,10 +370,12 @@ async function handleConfig(interaction, { db }, member) {
     }
     if (subcommand === "behavior") {
         const interactiveLog = interaction.options.getBoolean("interactive_log");
+        const cmApproval = interaction.options.getBoolean("cm_approval");
         const linkedServer = interaction.options.getString("linked_server");
         const moderationInvite = interaction.options.getString("moderation_invite");
         db.updateGuildConfig(guild.id, {
             interactive_log_enabled: interactiveLog === null ? undefined : interactiveLog ? 1 : 0,
+            approval_enabled: cmApproval === null ? undefined : cmApproval ? 1 : 0,
             ...(linkedServer !== null ? { linked_guild_id: linkedServer || null } : {}),
             ...(moderationInvite !== null ? { moderation_invite: moderationInvite || null } : {})
         });

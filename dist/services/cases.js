@@ -146,7 +146,7 @@ export async function createCase(db, input) {
     const actionDisplayName = input.actionDisplayName ? cleanActionDisplayName(input.actionDisplayName) : action.displayName;
     const config = db.getGuildConfig(guildId);
     const isCm = getStaffTier(db, input.moderator) === "community";
-    const requiresApproval = Boolean(config.approvalChannelId && !isCm && input.moderator.id !== input.guild.ownerId);
+    const requiresApproval = Boolean(config.approvalEnabled && config.approvalChannelId && !isCm && input.moderator.id !== input.guild.ownerId);
     const juniorNeedsReview = isJuniorOnlyMod(db, input.moderator) && Boolean(config.juniorHelpChannelId);
     const multiplierMilli = config.pointsEnabled ? activeMultiplier(config) : 1000;
     const actionPoints = effectiveActionPoints(action);

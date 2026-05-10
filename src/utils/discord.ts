@@ -195,6 +195,7 @@ export function configSummaryEmbed(config: GuildConfig, extra: { ingameLogChanne
       { name: "Steward Actions", value: config.stewardLogChannelId ? `<#${config.stewardLogChannelId}>` : "Not set", inline: true },
       { name: "Timezone", value: config.timezone, inline: true },
       { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true },
+      { name: "CM Approval", value: config.approvalEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "Point System", value: config.pointsEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "Quota Enabled", value: config.quotaEnabled ? "Yes" : "No", inline: true }
     );

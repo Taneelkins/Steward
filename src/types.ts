@@ -25,6 +25,7 @@ export type GuildConfig = {
   juniorOtherEscalationRoleIds: string[];
   juniorOtherEscalationUserIds: string[];
   interactiveLogEnabled: boolean;
+  approvalEnabled: boolean;
   pointsEnabled: boolean;
   timezone: string;
   quotaRequiredLogs: number;
