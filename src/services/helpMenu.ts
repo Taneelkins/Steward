@@ -220,10 +220,10 @@ const helpCommands: HelpCommand[] = [
     subcommands: [
       "roles: staff_role, can_register_role, community_manager_role, head_mod_role, senior_mod_role, normal_mod_role, junior_mod_role, junior_escalation_role, junior_other_escalation_role",
       "channels: actions (fallback), alerts, audit, quota, quota_alerts, staff_registration, ticket_transcripts, ticket_alerts, approval_channel, junior_help, logingame, logstrike, logrestore, logdiscord, logticket, logappeal, evidence_archive",
-      "behavior: interactive_log"
+      "behavior: interactive_log, points_enabled, quota_enabled"
     ],
     examples: ["`/config channels logingame:#log-ingame logdiscord:#log-discord alerts:#mod-alerts junior_help:#junior-review`", "`/config roles staff_role:@Staff community_manager_role:@CM junior_mod_role:@Junior`"],
-    notes: ["Use `/config` to point the bot at premade roles/channels without rerunning setup.", "Use `/update` for safe repair after bot updates.", "Use `/config check` to see what is and isn't configured."]
+    notes: ["Use `/config` to point the bot at premade roles/channels without rerunning setup.", "Use `/update` for safe repair after bot updates.", "Use `/config check` to see the full status of every configured channel, role, and setting."]
   },
   {
     id: "refresh",
