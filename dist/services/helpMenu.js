@@ -27,7 +27,7 @@ const helpCommands = [
             "Red field buttons are required and still missing. Green means submit/success/completed required fields. Blue opens an editing action. Grey is optional navigation/details/back. Red Cancel stops the draft.",
             "Back returns to the log type picker. Submit creates the case. Inactive drafts expire after 5 minutes, and starting another command cancels the old draft.",
             "Attach Media turns on evidence capture; send image/video/file evidence in the same channel before Submit. Final logs show media as clickable buttons.",
-            "Junior Moderator ban logs ping Senior Moderator for review and completion."
+            "Junior Mod logs go to the junior help channel for review instead of the log channel directly. A mod must approve or deny. On deny, the junior mod is DM'd with the reason and can run /log to edit and resubmit."
         ]
     },
     {
@@ -156,7 +156,7 @@ const helpCommands = [
         usage: ["`/quota set required_logs:5`", "`/quota schedule day:Sunday time:21:00 timezone:America/New_York`", "`/quota status`"],
         subcommands: ["set, role-set, role-remove, schedule, end-now, check-now, me, enable, disable, history, status, leaderboard, exempt add/remove/list"],
         examples: ["`/quota exempt add moderator:@Mod reason:LOA expires_at:2026-06-01`", "`/quota leaderboard`"],
-        notes: ["Quota end pings only go to Mod Alerts.", "Reports stay server-specific."]
+        notes: ["Quota period-end pings only the Community Manager role. Warning pings go to individuals who are below quota.", "Reports stay server-specific."]
     },
     {
         id: "ticketlog",
@@ -190,12 +190,34 @@ const helpCommands = [
         who: "Community Manager-level.",
         usage: ["`/config roles ...`", "`/config channels ...`", "`/config behavior interactive_log:true`"],
         subcommands: [
-            "roles: staff_role, can_register_role, community_manager_role, head_mod_role, senior_mod_role, normal_mod_role, junior_mod_role",
-            "channels: actions, strikes, alerts, audit, quota, staff_registration, ticket_transcripts, ticket_alerts, logban, logstrike, logrestore, logdiscord, logticket",
+            "roles: staff_role, can_register_role, community_manager_role, head_mod_role, senior_mod_role, normal_mod_role, junior_mod_role, junior_escalation_role, junior_other_escalation_role",
+            "channels: actions (fallback), alerts, audit, quota, quota_alerts, staff_registration, ticket_transcripts, ticket_alerts, approval_channel, junior_help, logingame, logstrike, logrestore, logdiscord, logticket, logappeal, evidence_archive",
             "behavior: interactive_log"
         ],
-        examples: ["`/config channels logban:#logban logdiscord:#log-discord alerts:#mod-alerts`", "`/config roles staff_role:@Staff can_register_role:@Can register`"],
-        notes: ["Use `/config` to point the bot at premade roles/channels without rerunning setup.", "Use `/update` for safe repair after bot updates."]
+        examples: ["`/config channels logingame:#log-ingame logdiscord:#log-discord alerts:#mod-alerts junior_help:#junior-review`", "`/config roles staff_role:@Staff community_manager_role:@CM junior_mod_role:@Junior`"],
+        notes: ["Use `/config` to point the bot at premade roles/channels without rerunning setup.", "Use `/update` for safe repair after bot updates.", "Use `/config check` to see what is and isn't configured."]
+    },
+    {
+        id: "refresh",
+        label: "/refresh",
+        access: "head",
+        levels: ["admin"],
+        what: "Clears and reposts all pending CM approval cases in the approval channel.",
+        who: "Head Mod-level.",
+        usage: ["`/refresh`"],
+        examples: ["`/refresh`"],
+        notes: ["Run this if the approval channel gets out of sync or messages were deleted."]
+    },
+    {
+        id: "updatebot",
+        label: "/updatebot",
+        access: "owner",
+        levels: ["admin"],
+        what: "Pulls the latest code from GitHub, rebuilds, deploys slash commands, and restarts the bot.",
+        who: "Server owner only.",
+        usage: ["`/updatebot`"],
+        examples: ["`/updatebot`"],
+        notes: ["PM2 automatically brings the bot back online after restart.", "The bot will be offline for a few seconds during restart."]
     },
     {
         id: "setup",
