@@ -265,8 +265,9 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
         roblox_id, discord_id, moderator_user_id, moderator_username,
         action_name, action_display_name, reason, evidence, notes, base_points_milli, multiplier_milli,
         awarded_points_milli, strikes, status, flags, is_late, is_no_action,
-        ticket_id, transcript_url, media_links_json, created_at, updated_at, approval_status, junior_review_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ticket_id, transcript_url, media_links_json, appeal_type, appeal_result, punishment_length,
+        created_at, updated_at, approval_status, junior_review_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       guildId,
       target.targetKey,
       target.targetLabel,
@@ -291,6 +292,9 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
       input.ticketId ?? null,
       input.transcriptUrl ?? null,
       mediaLinks.length > 0 ? JSON.stringify(mediaLinks) : null,
+      input.appealType ?? null,
+      input.appealResult ?? null,
+      input.punishmentLength ?? null,
       timestamp,
       timestamp,
       requiresApproval ? "pending" : null,
