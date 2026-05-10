@@ -1,0 +1,136 @@
+export type GuildConfig = {
+  guildId: string;
+  modRoleId: string | null;
+  adminRoleId: string | null;
+  actionLogChannelId: string | null;
+  strikeLogChannelId: string | null;
+  alertChannelId: string | null;
+  auditChannelId: string | null;
+  quotaChannelId: string | null;
+  staffRegistrationChannelId: string | null;
+  registrationRoleId: string | null;
+  ticketTranscriptChannelId: string | null;
+  ticketAlertChannelId: string | null;
+  ownerUserId: string | null;
+  ticketToolBotId: string | null;
+  evidenceArchiveChannelId: string | null;
+  juniorEscalationRoleIds: string[];
+  juniorEscalationUserIds: string[];
+  juniorOtherEscalationRoleIds: string[];
+  juniorOtherEscalationUserIds: string[];
+  interactiveLogEnabled: boolean;
+  pointsEnabled: boolean;
+  timezone: string;
+  quotaRequiredLogs: number;
+  quotaGraceLogs: number;
+  quotaEnabled: boolean;
+  quotaFrequencyDays: number;
+  quotaCheckDay: number;
+  quotaCheckHour: number;
+  quotaCheckMinute: number;
+  quotaPeriodStart: string | null;
+  quotaPeriodEnd: string | null;
+  quotaStatusMessageId: string | null;
+  quotaWarningHours: number;
+  quotaWarningSentAt: string | null;
+  multiplierMilli: number;
+  multiplierEndsAt: string | null;
+  lastTranscriptMessageId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ActionPreset = {
+  guildId: string;
+  name: string;
+  displayName: string;
+  basePointsMilli: number;
+  noActionPointsMilli: number;
+  overrideBasePointsMilli: number | null;
+  overrideNoActionPointsMilli: number | null;
+  overrideEndsAt: string | null;
+  overrideReason: string | null;
+  overrideCreatedBy: string | null;
+  defaultStrikes: number;
+  evidenceRequired: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ModerationCase = {
+  id: number;
+  guildId: string;
+  targetUserId: string;
+  targetUsername: string;
+  robloxUsername: string | null;
+  discordUsername: string | null;
+  robloxId: string | null;
+  discordId: string | null;
+  moderatorUserId: string;
+  moderatorUsername: string;
+  actionName: string;
+  actionDisplayName: string | null;
+  reason: string;
+  evidence: string | null;
+  notes: string | null;
+  basePointsMilli: number;
+  multiplierMilli: number;
+  awardedPointsMilli: number;
+  strikes: number;
+  status: "active" | "void";
+  flags: string;
+  isLate: boolean;
+  isNoAction: boolean;
+  ticketId: string | null;
+  transcriptUrl: string | null;
+  mediaLinks: CaseMediaLink[];
+  appealType: string | null;
+  appealResult: "accepted" | "denied" | null;
+  punishmentLength: string | null;
+  createdAt: string;
+  updatedAt: string;
+  voidedAt: string | null;
+  voidReason: string | null;
+};
+
+export type CaseMediaLink = {
+  label: string;
+  url: string;
+  kind: "image" | "video" | "file";
+  sourceUrl?: string | null;
+};
+
+export type PendingTicketLog = {
+  id: number;
+  guildId: string;
+  transcriptMessageId: string;
+  transcriptChannelId: string;
+  ticketId: string | null;
+  ticketType: string;
+  openerUserId: string | null;
+  closedChannelId: string | null;
+  transcriptUrl: string | null;
+  status: "pending" | "logged" | "dismissed" | "needs_review" | "overdue";
+  createdAt: string;
+  dueAt: string;
+  loggedCaseId: number | null;
+  adminNotes: string | null;
+};
+
+export type QuotaMemberStatus = {
+  userId: string;
+  requiredLogs: number;
+  loggedActions: number;
+  missing: number;
+  status: "met" | "close" | "missed" | "exempt";
+  exemptionReason?: string;
+};
+
+export type QuotaReport = {
+  guildId: string;
+  periodStart: string;
+  periodEnd: string;
+  statuses: QuotaMemberStatus[];
+  createdAt: string;
+};

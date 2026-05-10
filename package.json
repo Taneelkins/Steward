@@ -1,0 +1,36 @@
+{
+  "name": "self-hosted-mod-ledger-bot",
+  "version": "1.0.0",
+  "description": "A self-hosted Discord moderation logging, points, strikes, quotas, and ticket tracking bot.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "deploy": "tsx src/deploy-commands.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "check": "npm run build && npm run test"
+  },
+  "keywords": [
+    "discord",
+    "moderation",
+    "bot",
+    "sqlite",
+    "self-hosted"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
