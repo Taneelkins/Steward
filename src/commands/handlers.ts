@@ -177,6 +177,16 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
   }
 }
 
+function execError(error: unknown): string {
+  if (error instanceof Error) {
+    const stdout = (error as any).stdout ?? "";
+    const stderr = (error as any).stderr ?? "";
+    const detail = [stdout, stderr].filter(Boolean).join("\n").trim();
+    return detail || error.message;
+  }
+  return String(error);
+}
+
 async function handleSetup(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
   requireServerOwner(member);
   const guild = interaction.guild!;
@@ -1381,8 +1391,8 @@ async function handleUpdateBot(interaction: ChatInputCommandInteraction, member:
     await interaction.editReply("Pulling latest code from GitHub...");
     pullOutput = execSync("git pull", { encoding: "utf8", cwd: process.cwd() });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    await interaction.editReply(`Git pull failed:\n\`\`\`\n${msg.slice(0, 1800)}\n\`\`\``);
+    const detail = execError(error);
+    await interaction.editReply(`Git pull failed:\n\`\`\`\n${detail.slice(0, 1800)}\n\`\`\``);
     return;
   }
 
@@ -1391,8 +1401,8 @@ async function handleUpdateBot(interaction: ChatInputCommandInteraction, member:
     await interaction.editReply(`Pulled.\n\`\`\`\n${pullOutput.trim().slice(0, 800)}\n\`\`\`\nBuilding...`);
     buildOutput = execSync("npm run build", { encoding: "utf8", cwd: process.cwd() });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    await interaction.editReply(`Build failed:\n\`\`\`\n${msg.slice(0, 1800)}\n\`\`\``);
+    const detail = execError(error);
+    await interaction.editReply(`Build failed:\n\`\`\`\n${detail.slice(0, 1800)}\n\`\`\``);
     return;
   }
 
@@ -1401,8 +1411,8 @@ async function handleUpdateBot(interaction: ChatInputCommandInteraction, member:
     await interaction.editReply(`Built. Deploying slash commands...`);
     deployOutput = execSync("npm run deploy", { encoding: "utf8", cwd: process.cwd() });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    await interaction.editReply(`Deploy failed:\n\`\`\`\n${msg.slice(0, 1800)}\n\`\`\``);
+    const detail = execError(error);
+    await interaction.editReply(`Deploy failed:\n\`\`\`\n${detail.slice(0, 1800)}\n\`\`\``);
     return;
   }
 
