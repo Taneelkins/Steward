@@ -8,6 +8,7 @@ import { runStartupRecovery, startScheduler } from "./scheduler.js";
 import { handleTicketButton, handlePotentialTranscript } from "./services/tickets.js";
 import { handleLogButton, handleLogMediaMessage, handleLogModal, initDraftPersistence } from "./services/logWorkflow.js";
 import { handleHelpButton } from "./services/helpMenu.js";
+import { handleApprovalButton } from "./services/cases.js";
 const env = readEnv();
 assertRuntimeEnv(env);
 initDraftPersistence(path.join(path.dirname(env.databasePath), "drafts"));
@@ -74,6 +75,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return true;
         });
         if (logHandled)
+            return;
+        const approvalHandled = await handleApprovalButton(db, interaction).catch(async (error) => {
+            const message = error instanceof Error ? error.message : "Something went wrong.";
+            if (interaction.replied || interaction.deferred) {
+                await interaction.editReply(`Error: ${message}`).catch(() => null);
+            }
+            else {
+                await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+            }
+            return true;
+        });
+        if (approvalHandled)
             return;
     }
     if (interaction.isModalSubmit()) {

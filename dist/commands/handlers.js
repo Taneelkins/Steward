@@ -12,6 +12,7 @@ import { buildLeaderboardEmbed, buildQuotaReport, buildQuotaReportEmbed, closeQu
 import { cancelPendingLogForUser, resolveLogAction, startInteractiveLog } from "../services/logWorkflow.js";
 import { replyHelpMenu } from "../services/helpMenu.js";
 import { normalizeTicketType, processOverdueTickets } from "../services/tickets.js";
+import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
 export async function handleChatInputCommand(interaction, context) {
     if (!interaction.guild || !interaction.member) {
@@ -113,6 +114,9 @@ export async function handleChatInputCommand(interaction, context) {
                 break;
             case "updatebot":
                 await handleUpdateBot(interaction, member);
+                break;
+            case "refresh":
+                await handleRefresh(interaction, context, member);
                 break;
             case "export":
                 await handleExport(interaction, context, member);
@@ -356,6 +360,7 @@ async function handleConfig(interaction, { db }, member) {
         ticket_transcript_channel_id: getTextChannelOption(interaction, "ticket_transcripts")?.id,
         ticket_alert_channel_id: getTextChannelOption(interaction, "ticket_alerts")?.id ?? actionLogUpdates.find((update) => update.actionName === "ticket")?.channel.id,
         appeal_log_channel_id: getTextChannelOption(interaction, "logappeal")?.id ?? actionLogUpdates.find((update) => update.actionName === "appeal")?.channel.id,
+        approval_channel_id: getTextChannelOption(interaction, "approval_channel")?.id,
         owner_user_id: interaction.options.getUser("owner")?.id,
         ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined
     };
@@ -1076,6 +1081,18 @@ async function handleUpdateBot(interaction, member) {
     const summary = [pullOutput.trim(), buildOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);
     await interaction.editReply(`Update complete. Restarting bot...\n\`\`\`\n${summary}\n\`\`\``);
     setTimeout(() => process.exit(75), 1500);
+}
+async function handleRefresh(interaction, { db }, member) {
+    await requireAdmin(db, member);
+    const guild = interaction.guild;
+    const config = db.getGuildConfig(guild.id);
+    if (!config.approvalChannelId) {
+        await interaction.reply({ content: "No CM approval channel is configured. Set one with `/config channels approval_channel`.", ephemeral: true });
+        return;
+    }
+    await interaction.deferReply({ ephemeral: true });
+    const count = await refreshApprovalChannel(db, guild);
+    await interaction.editReply(`Refreshed approval channel: re-posted ${count} pending case${count !== 1 ? "s" : ""}.`);
 }
 async function replyError(interaction, error) {
     const message = error instanceof Error ? error.message : "Something went wrong.";

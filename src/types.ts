@@ -16,6 +16,7 @@ export type GuildConfig = {
   ticketToolBotId: string | null;
   evidenceArchiveChannelId: string | null;
   appealLogChannelId: string | null;
+  approvalChannelId: string | null;
   juniorEscalationRoleIds: string[];
   juniorEscalationUserIds: string[];
   juniorOtherEscalationRoleIds: string[];
@@ -90,6 +91,8 @@ export type ModerationCase = {
   appealType: string | null;
   appealResult: "accepted" | "denied" | null;
   punishmentLength: string | null;
+  approvalStatus: "pending" | "approved" | "denied" | null;
+  approvalMessageId: string | null;
   createdAt: string;
   updatedAt: string;
   voidedAt: string | null;

@@ -158,7 +158,8 @@ export function buildQuotaReport(db: AppDatabase, guildId: string, periodStart: 
     const loggedActions =
       db.get<{ count: number }>(
         `SELECT COUNT(*) AS count FROM moderation_cases
-         WHERE guild_id = ? AND moderator_user_id = ? AND created_at >= ? AND created_at < ? AND status = 'active'`,
+         WHERE guild_id = ? AND moderator_user_id = ? AND created_at >= ? AND created_at < ? AND status = 'active'
+           AND (approval_status IS NULL OR approval_status = 'approved')`,
         guildId,
         snapshot.user_id,
         periodStart,
@@ -371,6 +372,7 @@ export function quotaLeaderboard(db: AppDatabase, guildId: string, periodStart?:
       `SELECT moderator_user_id, COUNT(*) AS logs, COALESCE(SUM(awarded_points_milli), 0) AS points
        FROM moderation_cases
        WHERE guild_id = ? AND created_at >= ? AND created_at < ? AND status = 'active'
+         AND (approval_status IS NULL OR approval_status = 'approved')
        GROUP BY moderator_user_id ORDER BY logs DESC, points DESC LIMIT 20`,
       guildId,
       periodStart,
@@ -381,6 +383,7 @@ export function quotaLeaderboard(db: AppDatabase, guildId: string, periodStart?:
     `SELECT moderator_user_id, COUNT(*) AS logs, COALESCE(SUM(awarded_points_milli), 0) AS points
      FROM moderation_cases
      WHERE guild_id = ? AND status = 'active'
+       AND (approval_status IS NULL OR approval_status = 'approved')
      GROUP BY moderator_user_id ORDER BY logs DESC, points DESC LIMIT 20`,
     guildId
   );

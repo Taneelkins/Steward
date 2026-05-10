@@ -320,6 +320,7 @@ export class AppDatabase {
         ticket_tool_bot_id TEXT,
         evidence_archive_channel_id TEXT,
         appeal_log_channel_id TEXT,
+        approval_channel_id TEXT,
         junior_escalation_role_ids_json TEXT,
         junior_escalation_user_ids_json TEXT,
         junior_other_escalation_role_ids_json TEXT,
@@ -394,6 +395,8 @@ export class AppDatabase {
         appeal_type TEXT,
         appeal_result TEXT,
         punishment_length TEXT,
+        approval_status TEXT,
+        approval_message_id TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         voided_at TEXT,
@@ -563,6 +566,7 @@ export class AppDatabase {
     this.ensureColumn("guild_configs", "points_enabled", "INTEGER NOT NULL DEFAULT 1");
     this.ensureColumn("guild_configs", "evidence_archive_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "appeal_log_channel_id", "TEXT");
+    this.ensureColumn("guild_configs", "approval_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "quota_alert_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "junior_escalation_role_ids_json", "TEXT");
     this.ensureColumn("guild_configs", "junior_escalation_user_ids_json", "TEXT");
@@ -582,6 +586,8 @@ export class AppDatabase {
     this.ensureColumn("moderation_cases", "appeal_type", "TEXT");
     this.ensureColumn("moderation_cases", "appeal_result", "TEXT");
     this.ensureColumn("moderation_cases", "punishment_length", "TEXT");
+    this.ensureColumn("moderation_cases", "approval_status", "TEXT");
+    this.ensureColumn("moderation_cases", "approval_message_id", "TEXT");
     this.ensureColumn("pending_ticket_logs", "closed_channel_id", "TEXT");
     this.ensureColumn("pending_ticket_logs", "closed_channel_name", "TEXT");
     this.ensureColumn("staff_roles", "role_key", "TEXT");
@@ -612,6 +618,7 @@ type GuildConfigRow = {
   ticket_tool_bot_id: string | null;
   evidence_archive_channel_id: string | null;
   appeal_log_channel_id: string | null;
+  approval_channel_id: string | null;
   junior_escalation_role_ids_json: string | null;
   junior_escalation_user_ids_json: string | null;
   junior_other_escalation_role_ids_json: string | null;
@@ -686,6 +693,8 @@ type CaseRow = {
   appeal_type: string | null;
   appeal_result: "accepted" | "denied" | null;
   punishment_length: string | null;
+  approval_status: string | null;
+  approval_message_id: string | null;
   created_at: string;
   updated_at: string;
   voided_at: string | null;
@@ -748,6 +757,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     ticketToolBotId: row.ticket_tool_bot_id,
     evidenceArchiveChannelId: row.evidence_archive_channel_id,
     appealLogChannelId: row.appeal_log_channel_id,
+    approvalChannelId: row.approval_channel_id,
     juniorEscalationRoleIds: parseStringList(row.junior_escalation_role_ids_json),
     juniorEscalationUserIds: parseStringList(row.junior_escalation_user_ids_json),
     juniorOtherEscalationRoleIds: parseStringList(row.junior_other_escalation_role_ids_json),
@@ -826,11 +836,18 @@ function mapCase(row: CaseRow): ModerationCase {
     appealType: row.appeal_type,
     appealResult: row.appeal_result === "accepted" || row.appeal_result === "denied" ? row.appeal_result : null,
     punishmentLength: row.punishment_length,
+    approvalStatus: mapApprovalStatus(row.approval_status),
+    approvalMessageId: row.approval_message_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     voidedAt: row.voided_at,
     voidReason: row.void_reason
   };
+}
+
+function mapApprovalStatus(value: string | null): "pending" | "approved" | "denied" | null {
+  if (value === "pending" || value === "approved" || value === "denied") return value;
+  return null;
 }
 
 function parseMediaLinks(value: string | null) {

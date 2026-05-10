@@ -40,7 +40,8 @@ export const commandAccess: Record<string, CommandAccess> = {
   modshop: "community",
   config: "community",
   backup: "community",
-  export: "community"
+  export: "community",
+  refresh: "community"
 };
 
 export function tierAllows(tier: StaffTier | null, access: CommandAccess) {
@@ -48,7 +49,7 @@ export function tierAllows(tier: StaffTier | null, access: CommandAccess) {
   if (access === "register") return false;
   if (access === "owner") return false;
   if (!tier) return false;
-  if (tier === "community") return access === "community";
+  if (tier === "community") return true;
   if (tier === "head") return access === "head" || access === "normal" || access === "junior";
   if (tier === "normal") return access === "normal";
   return access === "junior";

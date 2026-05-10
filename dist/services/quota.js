@@ -87,7 +87,8 @@ export function buildQuotaReport(db, guildId, periodStart, periodEnd) {
         .map((exemption) => [exemption.user_id, exemption]));
     const statuses = snapshots.map((snapshot) => {
         const loggedActions = db.get(`SELECT COUNT(*) AS count FROM moderation_cases
-         WHERE guild_id = ? AND moderator_user_id = ? AND created_at >= ? AND created_at < ? AND status = 'active'`, guildId, snapshot.user_id, periodStart, periodEnd)?.count ?? 0;
+         WHERE guild_id = ? AND moderator_user_id = ? AND created_at >= ? AND created_at < ? AND status = 'active'
+           AND (approval_status IS NULL OR approval_status = 'approved')`, guildId, snapshot.user_id, periodStart, periodEnd)?.count ?? 0;
         const exemption = exemptionByUser.get(snapshot.user_id);
         if (exemption) {
             return {
@@ -270,11 +271,13 @@ export function quotaLeaderboard(db, guildId, periodStart, periodEnd) {
         return db.all(`SELECT moderator_user_id, COUNT(*) AS logs, COALESCE(SUM(awarded_points_milli), 0) AS points
        FROM moderation_cases
        WHERE guild_id = ? AND created_at >= ? AND created_at < ? AND status = 'active'
+         AND (approval_status IS NULL OR approval_status = 'approved')
        GROUP BY moderator_user_id ORDER BY logs DESC, points DESC LIMIT 20`, guildId, periodStart, periodEnd);
     }
     return db.all(`SELECT moderator_user_id, COUNT(*) AS logs, COALESCE(SUM(awarded_points_milli), 0) AS points
      FROM moderation_cases
      WHERE guild_id = ? AND status = 'active'
+       AND (approval_status IS NULL OR approval_status = 'approved')
      GROUP BY moderator_user_id ORDER BY logs DESC, points DESC LIMIT 20`, guildId);
 }
 export function buildLeaderboardEmbed(rows, title = "Quota Leaderboard", showPoints = true) {

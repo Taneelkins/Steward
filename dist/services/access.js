@@ -35,7 +35,8 @@ export const commandAccess = {
     modshop: "community",
     config: "community",
     backup: "community",
-    export: "community"
+    export: "community",
+    refresh: "community"
 };
 export function tierAllows(tier, access) {
     if (access === "public")
@@ -47,7 +48,7 @@ export function tierAllows(tier, access) {
     if (!tier)
         return false;
     if (tier === "community")
-        return access === "community";
+        return true;
     if (tier === "head")
         return access === "head" || access === "normal" || access === "junior";
     if (tier === "normal")

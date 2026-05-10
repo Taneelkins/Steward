@@ -1,9 +1,9 @@
 import type { Guild, GuildMember, User } from "discord.js";
-import { EmbedBuilder } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, EmbedBuilder } from "discord.js";
 import type { AppDatabase } from "../db.js";
 import type { ActionPreset, CaseMediaLink, ModerationCase } from "../types.js";
 import { formatMultiplier, formatPoints, truncate } from "../utils/format.js";
-import { caseLinkComponents, postToConfiguredChannel, transcriptFieldValue, userLabel } from "../utils/discord.js";
+import { caseLinkComponents, getStaffTier, getTextChannel, postToConfiguredChannel, transcriptFieldValue, userLabel } from "../utils/discord.js";
 import { colors } from "../utils/theme.js";
 import { nowIso, parseDateInput } from "../utils/time.js";
 import { writeAudit, writeAuditAndPost } from "./audit.js";
@@ -233,6 +233,8 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
   const actionDisplayName = input.actionDisplayName ? cleanActionDisplayName(input.actionDisplayName) : action.displayName;
 
   const config = db.getGuildConfig(guildId);
+  const isCm = getStaffTier(db, input.moderator) === "community";
+  const requiresApproval = Boolean(config.approvalChannelId && !isCm && input.moderator.id !== input.guild.ownerId);
   const multiplierMilli = config.pointsEnabled ? activeMultiplier(config) : 1000;
   const actionPoints = effectiveActionPoints(action);
   const basePointsMilli = config.pointsEnabled ? input.noAction ? actionPoints.noActionPointsMilli : actionPoints.basePointsMilli : 0;
@@ -262,8 +264,8 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
         roblox_id, discord_id, moderator_user_id, moderator_username,
         action_name, action_display_name, reason, evidence, notes, base_points_milli, multiplier_milli,
         awarded_points_milli, strikes, status, flags, is_late, is_no_action,
-        ticket_id, transcript_url, media_links_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ticket_id, transcript_url, media_links_json, created_at, updated_at, approval_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       guildId,
       target.targetKey,
       target.targetLabel,
@@ -289,10 +291,11 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
       input.transcriptUrl ?? null,
       mediaLinks.length > 0 ? JSON.stringify(mediaLinks) : null,
       timestamp,
-      timestamp
+      timestamp,
+      requiresApproval ? "pending" : null
     );
     const caseId = Number(result.lastInsertRowid);
-    if (config.pointsEnabled && awardedPointsMilli !== 0) {
+    if (!requiresApproval && config.pointsEnabled && awardedPointsMilli !== 0) {
       db.run(
         `INSERT INTO point_ledger (guild_id, moderator_user_id, case_id, amount_milli, reason, type, created_by, created_at)
          VALUES (?, ?, ?, ?, ?, 'award', ?, ?)`,
@@ -342,6 +345,13 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
       inline: false
     });
   }
+  if (requiresApproval) {
+    embed.addFields({
+      name: "⏳ Pending CM Approval",
+      value: "This log requires Community Manager approval before it counts toward quota and points.",
+      inline: false
+    });
+  }
   const components = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
   const appealChannel = actionName === "appeal" ? config.appealLogChannelId : null;
   const logChannel = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
@@ -351,6 +361,9 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
     ...(components.length > 0 ? { components } : {}),
     ...(juniorEscalation?.roleIds.length ? { allowedMentions: { roles: juniorEscalation.roleIds, users: juniorEscalation.userIds } } : {})
   });
+  if (requiresApproval) {
+    await postApprovalRequest(db, input.guild, record);
+  }
   if (strikes > 0) {
     await maybePostStrikeAlert(db, input.guild, record);
   }
@@ -556,6 +569,151 @@ function getJuniorEscalation(db: AppDatabase, member: GuildMember, actionName: s
   ].join(" ");
 
   return { roleIds, userIds, mentions };
+}
+
+function buildApprovalEmbed(record: ModerationCase, status: "pending" | "approved" | "denied", reviewedByUserId?: string) {
+  const statusColor = status === "approved" ? 0x2ecc71 : status === "denied" ? 0xe74c3c : 0xf39c12;
+  const statusText = status === "approved" ? "✅ Approved" : status === "denied" ? "❌ Denied" : "⏳ Pending CM Approval";
+  const fields: { name: string; value: string; inline?: boolean }[] = [
+    { name: "Moderator", value: `<@${record.moderatorUserId}>`, inline: true },
+    { name: "Action", value: record.actionDisplayName ?? record.actionName, inline: true },
+    { name: "Status", value: statusText, inline: true },
+    { name: "Target", value: truncate(formatCaseTarget(record), 1000), inline: false },
+    { name: "Reason", value: truncate(record.reason, 500), inline: false }
+  ];
+  if (record.notes) fields.push({ name: "Notes", value: truncate(record.notes, 300), inline: false });
+  if (reviewedByUserId) fields.push({ name: "Reviewed By", value: `<@${reviewedByUserId}>`, inline: true });
+  return new EmbedBuilder()
+    .setTitle(`CM Approval: ${record.actionDisplayName ?? record.actionName} — Case #${record.id}`)
+    .setColor(statusColor)
+    .addFields(fields)
+    .setTimestamp();
+}
+
+function buildApprovalComponents(caseId: number) {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`approval:approve:${caseId}`).setLabel("Approve").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`approval:deny:${caseId}`).setLabel("Deny").setStyle(ButtonStyle.Danger)
+    )
+  ];
+}
+
+async function postApprovalRequest(db: AppDatabase, guild: Guild, record: ModerationCase) {
+  const config = db.getGuildConfig(guild.id);
+  if (!config.approvalChannelId) return;
+  const embed = buildApprovalEmbed(record, "pending");
+  const components = buildApprovalComponents(record.id);
+  const msg = await postToConfiguredChannel(guild, config.approvalChannelId, {
+    embeds: [embed],
+    components,
+    allowedMentions: { parse: [] }
+  });
+  if (msg) {
+    db.run("UPDATE moderation_cases SET approval_message_id = ? WHERE guild_id = ? AND id = ?", msg.id, guild.id, record.id);
+  }
+}
+
+export async function handleApprovalButton(db: AppDatabase, interaction: ButtonInteraction): Promise<boolean> {
+  if (!interaction.customId.startsWith("approval:")) return false;
+  if (!interaction.guild) return false;
+  const parts = interaction.customId.split(":");
+  if (parts.length !== 3) return false;
+  const [, action, caseIdStr] = parts;
+  if (action !== "approve" && action !== "deny") return false;
+  const caseId = parseInt(caseIdStr, 10);
+  if (isNaN(caseId)) return false;
+
+  const guildMember = interaction.member as GuildMember;
+  const tier = getStaffTier(db, guildMember);
+  if (tier !== "community") {
+    await interaction.reply({ content: "Only Community Managers can approve or deny cases.", ephemeral: true });
+    return true;
+  }
+
+  const record = db.getCase(interaction.guild.id, caseId);
+  if (!record) {
+    await interaction.reply({ content: `Case #${caseId} was not found.`, ephemeral: true });
+    return true;
+  }
+  if (record.approvalStatus !== "pending") {
+    await interaction.reply({ content: `Case #${caseId} has already been ${record.approvalStatus ?? "processed"}.`, ephemeral: true });
+    return true;
+  }
+
+  const timestamp = nowIso();
+  if (action === "approve") {
+    const config = db.getGuildConfig(interaction.guild.id);
+    db.transaction(() => {
+      db.run(
+        "UPDATE moderation_cases SET approval_status = 'approved', updated_at = ? WHERE guild_id = ? AND id = ?",
+        timestamp, interaction.guild!.id, caseId
+      );
+      if (config.pointsEnabled && record.awardedPointsMilli !== 0) {
+        db.run(
+          `INSERT INTO point_ledger (guild_id, moderator_user_id, case_id, amount_milli, reason, type, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, 'award', ?, ?)`,
+          interaction.guild!.id,
+          record.moderatorUserId,
+          caseId,
+          record.awardedPointsMilli,
+          `Case #${caseId}: ${record.actionDisplayName ?? record.actionName}`,
+          interaction.user.id,
+          timestamp
+        );
+      }
+    });
+    await interaction.update({
+      embeds: [buildApprovalEmbed(record, "approved", interaction.user.id)],
+      components: []
+    });
+  } else {
+    db.run(
+      "UPDATE moderation_cases SET approval_status = 'denied', updated_at = ? WHERE guild_id = ? AND id = ?",
+      timestamp, interaction.guild.id, caseId
+    );
+    await interaction.update({
+      embeds: [buildApprovalEmbed(record, "denied", interaction.user.id)],
+      components: []
+    });
+  }
+  return true;
+}
+
+export async function refreshApprovalChannel(db: AppDatabase, guild: Guild): Promise<number> {
+  const config = db.getGuildConfig(guild.id);
+  if (!config.approvalChannelId) return 0;
+  const channel = await getTextChannel(guild, config.approvalChannelId);
+  if (!channel) return 0;
+
+  // Fetch and delete existing messages
+  const messages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
+  if (messages && messages.size > 0) {
+    await channel.bulkDelete(messages).catch(async () => {
+      for (const msg of messages.values()) {
+        await msg.delete().catch(() => null);
+      }
+    });
+  }
+
+  // Re-post all pending cases
+  const pendingRows = db.all<{ id: number }>(
+    "SELECT id FROM moderation_cases WHERE guild_id = ? AND approval_status = 'pending' AND status = 'active' ORDER BY id ASC",
+    guild.id
+  );
+  let count = 0;
+  for (const { id } of pendingRows) {
+    const record = db.getCase(guild.id, id);
+    if (!record || record.approvalStatus !== "pending") continue;
+    const embed = buildApprovalEmbed(record, "pending");
+    const components = buildApprovalComponents(record.id);
+    const msg = await channel.send({ embeds: [embed], components, allowedMentions: { parse: [] } }).catch(() => null);
+    if (msg) {
+      db.run("UPDATE moderation_cases SET approval_message_id = ? WHERE guild_id = ? AND id = ?", msg.id, guild.id, record.id);
+      count++;
+    }
+  }
+  return count;
 }
 
 async function maybePostFastPointsAlert(db: AppDatabase, guild: Guild, record: ModerationCase) {

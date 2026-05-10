@@ -103,6 +103,11 @@ export function buildCommands(options: CommandBuildOptions = {}) {
       .setDescription("Pull the latest code from GitHub and restart the bot.")
       .setDefaultMemberPermissions(ownerDefault),
 
+    new SlashCommandBuilder()
+      .setName("refresh")
+      .setDescription("Clear and re-post all pending CM approval requests in the approval channel.")
+      .setDefaultMemberPermissions(communityDefault),
+
     exportCommand(pointsEnabled)
   ];
 
@@ -148,6 +153,7 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "logdiscord", "Discord log channel."))
         .addChannelOption((option) => textChannelOption(option, "logticket", "Ticket log channel."))
         .addChannelOption((option) => textChannelOption(option, "logappeal", "Appeal log channel."))
+        .addChannelOption((option) => textChannelOption(option, "approval_channel", "CM approval channel for quota/points review."))
         .addUserOption((option) => option.setName("owner").setDescription("Owner/admin DM target."))
         .addStringOption((option) => option.setName("ticket_tool_bot_id").setDescription("Ticket Tool bot user ID."))
     )
