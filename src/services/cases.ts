@@ -1,5 +1,5 @@
 import type { Guild, GuildMember, User } from "discord.js";
-import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, EmbedBuilder, ModalBuilder, ModalSubmitInteraction, TextInputBuilder, TextInputStyle } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, EmbedBuilder, ModalBuilder, ModalSubmitInteraction, PermissionFlagsBits, TextInputBuilder, TextInputStyle } from "discord.js";
 import type { AppDatabase } from "../db.js";
 import type { ActionPreset, CaseMediaLink, ModerationCase } from "../types.js";
 import { formatMultiplier, formatPoints, truncate } from "../utils/format.js";
@@ -122,7 +122,7 @@ export function formatCaseTarget(record: Pick<ModerationCase, "targetUsername" |
     record.robloxUsername ? `RobloxUser: ${record.robloxUsername}` : null,
     record.discordUsername ? `DiscordUser: ${record.discordUsername}` : null,
     record.robloxId ? `RobloxID: ${record.robloxId}` : null,
-    record.discordId ? `DiscordID: ${record.discordUsername ? `<@${record.discordId}>` : record.discordId}` : null
+    record.discordId ? `DiscordID: ${record.discordId}` : null
   ].filter(Boolean);
   return lines.length > 0 ? lines.join("\n") : record.targetUsername;
 }
@@ -359,7 +359,9 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
         inline: false
       });
     }
-    const components = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+    const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+    const executeRow = buildExecutePunishmentButton(record, config);
+    const components = [...(executeRow ? [executeRow] : []), ...linkComponents];
     const appealChannel = actionName === "appeal" ? config.appealLogChannelId : null;
     const logChannel = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
     await postToConfiguredChannel(input.guild, logChannel, {
@@ -630,8 +632,9 @@ export async function handleApprovalButton(db: AppDatabase, interaction: ButtonI
   if (isNaN(caseId)) return false;
 
   const guildMember = interaction.member as GuildMember;
+  const isOwnerOrAdmin = guildMember.id === interaction.guild.ownerId || guildMember.permissions.has(PermissionFlagsBits.Administrator);
   const tier = getStaffTier(db, guildMember);
-  if (tier !== "community") {
+  if (!isOwnerOrAdmin && tier !== "community") {
     await interaction.reply({ content: "Only Community Managers can approve or deny cases.", ephemeral: true });
     return true;
   }
@@ -757,13 +760,12 @@ function buildJuniorReviewEmbed(
     .setTimestamp();
 }
 
-function buildJuniorReviewComponents(caseId: number) {
-  return [
-    new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`junior_review:approve:${caseId}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`junior_review:deny:${caseId}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
-    )
-  ];
+function buildJuniorReviewComponents(record: ModerationCase) {
+  const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`junior_review:approve:${record.id}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`junior_review:deny:${record.id}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger)
+  );
+  return [actionRow, ...caseLinkComponents(record.transcriptUrl, record.mediaLinks)];
 }
 
 async function postJuniorReviewRequest(
@@ -774,7 +776,7 @@ async function postJuniorReviewRequest(
 ) {
   const config = db.getGuildConfig(guild.id);
   const embed = buildJuniorReviewEmbed(record, "pending");
-  const components = buildJuniorReviewComponents(record.id);
+  const components = buildJuniorReviewComponents(record);
   const msg = await postToConfiguredChannel(guild, config.juniorHelpChannelId, {
     content: `${escalation.mentions} A Junior Moderator has submitted a log for review.`,
     embeds: [embed],
@@ -801,8 +803,9 @@ export async function handleJuniorReviewButton(db: AppDatabase, interaction: But
   if (isNaN(caseId) || (action !== "approve" && action !== "deny")) return false;
 
   const guildMember = interaction.member as GuildMember;
+  const isOwnerOrAdmin = guildMember.id === interaction.guild.ownerId || guildMember.permissions.has(PermissionFlagsBits.Administrator);
   const tier = getStaffTier(db, guildMember);
-  if (tier === "junior" || tier === null) {
+  if (!isOwnerOrAdmin && (tier === "junior" || tier === null)) {
     await interaction.reply({ content: "Junior Moderators cannot approve or deny logs.", ephemeral: true });
     return true;
   }
@@ -943,6 +946,142 @@ export async function handleJuniorReviewModal(db: AppDatabase, interaction: Moda
 
   await interaction.editReply(`Case #${caseId} denied. The Junior Moderator has been notified.`);
   return record;
+}
+
+type DiscordPunishment =
+  | { kind: "ban" }
+  | { kind: "kick" }
+  | { kind: "timeout"; durationMs: number }
+  | { kind: "warn" };
+
+function extractDiscordTargetId(record: ModerationCase): string | null {
+  if (record.discordId) return record.discordId;
+  if (record.targetUserId.startsWith("discord:")) return record.targetUserId.slice("discord:".length);
+  return null;
+}
+
+function parsePunishmentLength(value: string | null): number | null {
+  if (!value) return null;
+  const match = /(\d+)\s*(d(?:ays?)?|h(?:ours?)?|m(?:ins?)?(?:utes?)?)/i.exec(value);
+  if (!match) return null;
+  const n = parseInt(match[1], 10);
+  const unit = match[2][0].toLowerCase();
+  if (unit === "d") return n * 24 * 60 * 60 * 1000;
+  if (unit === "h") return n * 60 * 60 * 1000;
+  if (unit === "m") return n * 60 * 1000;
+  return null;
+}
+
+function mapCaseToPunishment(record: ModerationCase): DiscordPunishment {
+  const display = (record.actionDisplayName ?? record.actionName).toLowerCase();
+  if (display.includes("ban") || record.actionName === "ban") return { kind: "ban" };
+  if (display.includes("kick")) return { kind: "kick" };
+  if (display.includes("timeout") || display.includes("mute")) {
+    const raw = parsePunishmentLength(record.punishmentLength);
+    const durationMs = raw ? Math.min(Math.max(raw, 60_000), 28 * 24 * 60 * 60 * 1000) : 60 * 60 * 1000;
+    return { kind: "timeout", durationMs };
+  }
+  return { kind: "warn" };
+}
+
+function buildExecutePunishmentButton(record: ModerationCase, config: { linkedGuildId: string | null }): ActionRowBuilder<ButtonBuilder> | null {
+  if (!config.linkedGuildId) return null;
+  if (!extractDiscordTargetId(record)) return null;
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`execute_punishment:${record.id}`)
+      .setLabel("⚡ Execute Punishment")
+      .setStyle(ButtonStyle.Danger)
+  );
+}
+
+export async function handleExecutePunishment(db: AppDatabase, interaction: ButtonInteraction): Promise<boolean> {
+  if (!interaction.customId.startsWith("execute_punishment:")) return false;
+  if (!interaction.guild) return false;
+
+  const caseId = parseInt(interaction.customId.split(":")[1], 10);
+  if (isNaN(caseId)) return false;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const record = db.getCase(interaction.guild.id, caseId);
+  if (!record) {
+    await interaction.editReply(`Case #${caseId} not found.`);
+    return true;
+  }
+
+  const config = db.getGuildConfig(interaction.guild.id);
+  if (!config.linkedGuildId) {
+    await interaction.editReply("No linked community server is configured. Set one with `/config behavior linked_server:<guild_id>`.");
+    return true;
+  }
+
+  const discordTargetId = extractDiscordTargetId(record);
+  if (!discordTargetId) {
+    await interaction.editReply("This case has no Discord user ID. Can only execute punishments on Discord targets.");
+    return true;
+  }
+
+  const linkedGuild = await interaction.client.guilds.fetch(config.linkedGuildId).catch(() => null);
+  if (!linkedGuild) {
+    await interaction.editReply(`Cannot access linked server \`${config.linkedGuildId}\`. Make sure the bot has joined that server.`);
+    return true;
+  }
+
+  const punishment = mapCaseToPunishment(record);
+  const actionLabel = punishment.kind === "ban" ? "banned" : punishment.kind === "kick" ? "kicked" : punishment.kind === "timeout" ? "timed out" : "warned";
+
+  // DM before banning so the message can go through
+  const targetUser = await interaction.client.users.fetch(discordTargetId).catch(() => null);
+  if (targetUser) {
+    const dmLines = [
+      `**You have been ${actionLabel}${punishment.kind !== "warn" ? ` in ${linkedGuild.name}` : ""}.** `,
+      ``,
+      `**Action:** ${record.actionDisplayName ?? record.actionName}`,
+      `**Reason:** ${record.reason}`,
+      record.evidence ? `**Evidence:** ${record.evidence}` : null,
+      punishment.kind === "timeout" ? `**Duration:** ${record.punishmentLength ?? "1 hour"}` : null,
+      ``,
+      config.moderationInvite
+        ? `To appeal, join the moderation server: ${config.moderationInvite}`
+        : null
+    ].filter(Boolean).join("\n");
+    await targetUser.send(dmLines).catch(() => null);
+  }
+
+  let success = true;
+  let errorMsg = "";
+  try {
+    if (punishment.kind === "ban") {
+      await linkedGuild.members.ban(discordTargetId, {
+        reason: `${record.actionDisplayName ?? record.actionName}: ${record.reason}`.slice(0, 512),
+        deleteMessageSeconds: 0
+      });
+    } else if (punishment.kind === "kick") {
+      const member = await linkedGuild.members.fetch(discordTargetId).catch(() => null);
+      if (!member) { success = false; errorMsg = "User is not in the linked server."; }
+      else await member.kick(`${record.actionDisplayName ?? record.actionName}: ${record.reason}`.slice(0, 512));
+    } else if (punishment.kind === "timeout") {
+      const member = await linkedGuild.members.fetch(discordTargetId).catch(() => null);
+      if (!member) { success = false; errorMsg = "User is not in the linked server."; }
+      else await member.timeout(punishment.durationMs, `${record.actionDisplayName ?? record.actionName}: ${record.reason}`.slice(0, 512));
+    }
+  } catch (err) {
+    success = false;
+    errorMsg = err instanceof Error ? err.message : "Unknown error.";
+  }
+
+  await writeAuditAndPost(db, interaction.guild, interaction.user.id, "punishment.executed", {
+    caseId: record.id, discordTargetId, linkedGuildId: config.linkedGuildId, action: punishment.kind, success, error: errorMsg || undefined
+  });
+
+  if (success) {
+    const dmNote = targetUser ? " A DM was sent." : " (Could not DM user.)";
+    await interaction.editReply(`✅ <@${discordTargetId}> has been ${actionLabel} in **${linkedGuild.name}**.${dmNote}`);
+  } else {
+    await interaction.editReply(`❌ Failed to ${punishment.kind} \`${discordTargetId}\`: ${errorMsg}\n\nCheck that the bot has the required permissions in the linked server.`);
+  }
+  return true;
 }
 
 async function maybePostFastPointsAlert(db: AppDatabase, guild: Guild, record: ModerationCase) {

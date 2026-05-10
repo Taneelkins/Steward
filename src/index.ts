@@ -13,7 +13,7 @@ import { runStartupRecovery, startScheduler } from "./scheduler.js";
 import { handlePotentialTranscript } from "./services/tickets.js";
 import { handleLogButton, handleLogMediaMessage, handleLogModal, injectDraftFromDeniedCase, initDraftPersistence } from "./services/logWorkflow.js";
 import { handleHelpButton } from "./services/helpMenu.js";
-import { handleApprovalButton, handleJuniorReviewButton, handleJuniorReviewModal } from "./services/cases.js";
+import { handleApprovalButton, handleExecutePunishment, handleJuniorReviewButton, handleJuniorReviewModal } from "./services/cases.js";
 
 const env = readEnv();
 assertRuntimeEnv(env);
@@ -94,6 +94,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return true;
     });
     if (juniorReviewHandled) return;
+
+    const execHandled = await handleExecutePunishment(db, interaction).catch(async (error) => {
+      const message = error instanceof Error ? error.message : "Something went wrong.";
+      if (interaction.replied || interaction.deferred) {
+        await interaction.editReply(`Error: ${message}`).catch(() => null);
+      } else {
+        await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+      }
+      return true;
+    });
+    if (execHandled) return;
   }
 
   if (interaction.isModalSubmit()) {

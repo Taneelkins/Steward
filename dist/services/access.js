@@ -22,6 +22,7 @@ export const commandAccess = {
     staff: "junior",
     bot: "junior",
     case: "normal",
+    lookup: "normal",
     action: "head",
     addpoints: "head",
     removepoints: "head",
