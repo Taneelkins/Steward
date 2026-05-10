@@ -128,8 +128,8 @@ export async function closeQuotaPeriod(db, guild, actorUserId = "system", reason
     writeAudit(db, guild.id, actorUserId, "quota.closed", { reason, periodStart: report.periodStart, periodEnd: report.periodEnd });
     const reportEmbed = buildQuotaReportEmbed(report);
     const alertChannelId = config.quotaAlertChannelId ?? config.alertChannelId;
-    const staffRoleIds = db.listStaffRoles(guild.id).map((role) => role.roleId);
-    const mentionRoleIds = staffRoleIds.length > 0 ? staffRoleIds : config.modRoleId ? [config.modRoleId] : [];
+    const cmRole = db.listStaffRoles(guild.id).find((role) => role.key === "communityManager");
+    const mentionRoleIds = cmRole ? [cmRole.roleId] : config.modRoleId ? [config.modRoleId] : [];
     await postToConfiguredChannel(guild, alertChannelId, {
         content: mentionRoleIds.length > 0 ? `${mentionRoleIds.map((roleId) => `<@&${roleId}>`).join(" ")} Quota period ended.` : "Quota period ended.",
         embeds: [reportEmbed],

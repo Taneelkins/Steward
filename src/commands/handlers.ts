@@ -1320,7 +1320,17 @@ async function handleUpdateBot(interaction: ChatInputCommandInteraction, member:
     return;
   }
 
-  const summary = [pullOutput.trim(), buildOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);
+  let deployOutput = "";
+  try {
+    await interaction.editReply(`Built. Deploying slash commands...`);
+    deployOutput = execSync("npm run deploy", { encoding: "utf8", cwd: process.cwd() });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    await interaction.editReply(`Deploy failed:\n\`\`\`\n${msg.slice(0, 1800)}\n\`\`\``);
+    return;
+  }
+
+  const summary = [pullOutput.trim(), buildOutput.trim(), deployOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);
   await interaction.editReply(`Update complete. Restarting bot...\n\`\`\`\n${summary}\n\`\`\``);
   setTimeout(() => process.exit(75), 1500);
 }
