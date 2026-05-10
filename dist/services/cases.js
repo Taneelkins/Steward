@@ -16,7 +16,6 @@ export function buildCaseLogEmbed(record, options = {}) {
         `Strikes: ${record.strikes}`,
         `Case ID: ${record.id}`,
         record.punishmentLength ? `Punishment Length: ${record.punishmentLength}` : null,
-        record.ticketId ? `Ticket ID: ${record.ticketId}` : null,
         record.transcriptUrl ? `Transcript: ${transcriptFieldValue(record.transcriptUrl)}` : null,
         record.mediaLinks.length > 0 ? `Media: ${record.mediaLinks.map((link) => link.label).join(", ")}` : null,
         record.flags ? `Flags: ${record.flags}` : null
@@ -168,9 +167,9 @@ export async function createCase(db, input) {
         roblox_id, discord_id, moderator_user_id, moderator_username,
         action_name, action_display_name, reason, evidence, notes, base_points_milli, multiplier_milli,
         awarded_points_milli, strikes, status, flags, is_late, is_no_action,
-        ticket_id, transcript_url, media_links_json, appeal_type, appeal_result, punishment_length,
+        transcript_url, media_links_json, appeal_type, appeal_result, punishment_length,
         created_at, updated_at, approval_status, junior_review_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, guildId, target.targetKey, target.targetLabel, target.robloxUsername, target.discordUsername, target.robloxId, target.discordId, input.moderator.id, userLabel(input.moderator), actionName, actionDisplayName, reason, input.evidence ?? null, input.notes ?? null, basePointsMilli, multiplierMilli, awardedPointsMilli, strikes, flagText, flags.late ? 1 : 0, input.noAction ? 1 : 0, input.ticketId ?? null, input.transcriptUrl ?? null, mediaLinks.length > 0 ? JSON.stringify(mediaLinks) : null, input.appealType ?? null, input.appealResult ?? null, input.punishmentLength ?? null, timestamp, timestamp, requiresApproval ? "pending" : null, juniorNeedsReview ? "pending" : null);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, guildId, target.targetKey, target.targetLabel, target.robloxUsername, target.discordUsername, target.robloxId, target.discordId, input.moderator.id, userLabel(input.moderator), actionName, actionDisplayName, reason, input.evidence ?? null, input.notes ?? null, basePointsMilli, multiplierMilli, awardedPointsMilli, strikes, flagText, flags.late ? 1 : 0, input.noAction ? 1 : 0, input.transcriptUrl ?? null, mediaLinks.length > 0 ? JSON.stringify(mediaLinks) : null, input.appealType ?? null, input.appealResult ?? null, input.punishmentLength ?? null, timestamp, timestamp, requiresApproval ? "pending" : null, juniorNeedsReview ? "pending" : null);
         const caseId = Number(result.lastInsertRowid);
         if (!requiresApproval && !juniorNeedsReview && config.pointsEnabled && awardedPointsMilli !== 0) {
             db.run(`INSERT INTO point_ledger (guild_id, moderator_user_id, case_id, amount_milli, reason, type, created_by, created_at)
@@ -178,9 +177,6 @@ export async function createCase(db, input) {
         }
         if (strikes > 0) {
             db.run("INSERT INTO strikes (guild_id, target_user_id, case_id, amount, active, created_at) VALUES (?, ?, ?, ?, 1, ?)", guildId, target.targetKey, caseId, strikes, timestamp);
-        }
-        if (input.ticketId) {
-            db.run("UPDATE pending_ticket_logs SET status = 'logged', logged_case_id = ? WHERE guild_id = ? AND ticket_id = ? AND status IN ('pending', 'needs_review', 'overdue')", caseId, guildId, input.ticketId);
         }
         writeAudit(db, guildId, input.moderator.id, "case.created", { caseId, actionName, actionDisplayName, awardedPointsMilli, pointsEnabled: config.pointsEnabled, flags: flagText, target: target.targetKey });
         return caseId;
@@ -492,7 +488,6 @@ function buildJuniorReviewEmbed(record, status, opts = {}) {
         `Evidence: ${record.evidence ?? "None"}`,
         `Notes: ${record.notes ?? "None"}`,
         record.punishmentLength ? `Punishment Length: ${record.punishmentLength}` : null,
-        record.ticketId ? `Ticket ID: ${record.ticketId}` : null,
         record.transcriptUrl ? `Transcript: ${transcriptFieldValue(record.transcriptUrl)}` : null,
         record.mediaLinks.length > 0 ? `Media: ${record.mediaLinks.map((l) => l.label).join(", ")}` : null
     ].filter(Boolean);
@@ -644,8 +639,7 @@ export async function handleJuniorReviewModal(db, interaction) {
                 `Reason: ${record.reason}`,
                 `Evidence: ${record.evidence ?? "None"}`,
                 `Notes: ${record.notes ?? "None"}`,
-                record.punishmentLength ? `Punishment: ${record.punishmentLength}` : null,
-                record.ticketId ? `Ticket ID: ${record.ticketId}` : null
+                record.punishmentLength ? `Punishment: ${record.punishmentLength}` : null
             ].filter(Boolean).join("\n"), 800),
             inline: false
         }, {

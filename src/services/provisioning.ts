@@ -23,7 +23,6 @@ export type SetupChannelKey =
   | "auditLog"
   | "modAlerts"
   | "staffRegistration"
-  | "ticketTranscripts"
   | "evidenceArchive";
 
 export type StaffRoleSpec = {
@@ -71,7 +70,6 @@ export const setupChannelSpecs: SetupChannelSpec[] = [
   { key: "auditLog", name: "audit-log", topic: "Bot audit events." },
   { key: "modAlerts", name: "mod-alerts", topic: "Administrative alerts, review flags, and quota-end pings." },
   { key: "staffRegistration", name: "staff-registration", topic: "Staff registration notices." },
-  { key: "ticketTranscripts", name: "ticket-transcripts", topic: "Ticket Tool transcript watcher channel." },
   { key: "evidenceArchive", name: "evidence-archive", topic: "Protected archived evidence re-uploaded by the moderation ledger bot." }
 ];
 

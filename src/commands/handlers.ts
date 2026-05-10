@@ -47,7 +47,6 @@ import {
 } from "../services/quota.js";
 import { cancelPendingLogForUser, resolveLogAction, startInteractiveLog } from "../services/logWorkflow.js";
 import { replyHelpMenu } from "../services/helpMenu.js";
-import { normalizeTicketType, processOverdueTickets } from "../services/tickets.js";
 import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
 
@@ -140,9 +139,6 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         break;
       case "quota":
         await handleQuota(interaction, context, member);
-        break;
-      case "ticketlog":
-        await handleTicketlog(interaction, context, member);
         break;
       case "staff":
         await handleStaff(interaction, context, member);
@@ -427,14 +423,11 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     quota_channel_id: getTextChannelOption(interaction, "quota")?.id,
     quota_alert_channel_id: getTextChannelOption(interaction, "quota_alerts")?.id,
     staff_registration_channel_id: getTextChannelOption(interaction, "staff_registration")?.id,
-    ticket_transcript_channel_id: getTextChannelOption(interaction, "ticket_transcripts")?.id,
-    ticket_alert_channel_id: getTextChannelOption(interaction, "ticket_alerts")?.id ?? actionLogUpdates.find((update) => update.actionName === "ticket")?.channel.id,
     appeal_log_channel_id: getTextChannelOption(interaction, "logappeal")?.id ?? actionLogUpdates.find((update) => update.actionName === "appeal")?.channel.id,
     approval_channel_id: getTextChannelOption(interaction, "approval_channel")?.id,
     junior_help_channel_id: getTextChannelOption(interaction, "junior_help")?.id,
     evidence_archive_channel_id: getTextChannelOption(interaction, "evidence_archive")?.id,
-    owner_user_id: interaction.options.getUser("owner")?.id,
-    ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined
+    owner_user_id: interaction.options.getUser("owner")?.id
   };
   db.updateGuildConfig(guild.id, values);
   await upsertQuotaStatusMessage(db, guild);
@@ -905,58 +898,6 @@ async function handleQuotaExempt(interaction: ChatInputCommandInteraction, db: A
   await interaction.reply({ content: truncate(listOrNone(lines), 1900), ephemeral: true });
 }
 
-async function handleTicketlog(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
-  await requireAdmin(db, member);
-  const guild = interaction.guild!;
-  const subcommand = interaction.options.getSubcommand();
-
-  if (subcommand === "pending") {
-    const rows = db.all<{ id: number; ticket_id: string | null; ticket_type: string; status: string; due_at: string }>(
-      "SELECT id, ticket_id, ticket_type, status, due_at FROM pending_ticket_logs WHERE guild_id = ? AND status IN ('pending', 'needs_review', 'overdue') ORDER BY due_at ASC LIMIT 20",
-      guild.id
-    );
-    const lines = rows.map(
-      (row) =>
-        `#${row.id} ${row.ticket_id ?? "unknown"} \`${row.ticket_type}\` ${row.status} - due ${discordTimestamp(row.due_at, "R")}`
-    );
-    await interaction.reply({ content: truncate(listOrNone(lines), 1900), ephemeral: true });
-    return;
-  }
-
-  if (subcommand === "dismiss") {
-    const pendingId = interaction.options.getInteger("pending_id", true);
-    const reason = interaction.options.getString("reason", true);
-    db.run("UPDATE pending_ticket_logs SET status = 'dismissed', admin_notes = ? WHERE guild_id = ? AND id = ?", reason, guild.id, pendingId);
-    await writeAuditAndPost(db, guild, interaction.user.id, "ticket.dismissed", { pendingTicketId: pendingId, reason });
-    await interaction.reply({ content: `Dismissed pending ticket #${pendingId}.`, ephemeral: true });
-    return;
-  }
-
-  if (subcommand === "check-now") {
-    await processOverdueTickets(db, guild);
-    await interaction.reply({ content: "Ticket overdue check finished.", ephemeral: true });
-    return;
-  }
-
-  if (subcommand === "map") {
-    const ticketType = normalizeTicketType(interaction.options.getString("ticket_type", true));
-    const action = normalizeActionName(interaction.options.getString("action", true));
-    if (!db.getAction(guild.id, action)) throw new Error(`Action preset "${action}" does not exist.`);
-    db.run(
-      `INSERT INTO ticket_action_mappings (guild_id, ticket_type, action_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(guild_id, ticket_type) DO UPDATE SET action_name = excluded.action_name, updated_at = excluded.updated_at`,
-      guild.id,
-      ticketType,
-      action,
-      nowIso(),
-      nowIso()
-    );
-    await writeAuditAndPost(db, guild, interaction.user.id, "ticket.mapping.updated", { ticketType, action });
-    await interaction.reply({ content: `Mapped ticket type \`${ticketType}\` to action \`${action}\`.`, ephemeral: true });
-  }
-}
-
 async function handleStaff(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
   await requireMod(db, member);
   const guild = interaction.guild!;
@@ -994,10 +935,6 @@ async function handleAudit(interaction: ChatInputCommandInteraction, { db }: Com
 async function handleBot(interaction: ChatInputCommandInteraction, { db, env }: CommandContext) {
   const guild = interaction.guild!;
   const config = db.getGuildConfig(guild.id);
-  const pendingTickets = db.get<{ count: number }>(
-    "SELECT COUNT(*) AS count FROM pending_ticket_logs WHERE guild_id = ? AND status IN ('pending', 'needs_review', 'overdue')",
-    guild.id
-  )?.count ?? 0;
   const embed = new EmbedBuilder()
     .setTitle("Bot Status")
     .setColor(0x2ecc71)
@@ -1005,8 +942,6 @@ async function handleBot(interaction: ChatInputCommandInteraction, { db, env }: 
       { name: "Database", value: env.databasePath },
       { name: "Point System", value: config.pointsEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "Quota", value: config.quotaEnabled ? `Enabled, ends ${config.quotaPeriodEnd ? discordTimestamp(config.quotaPeriodEnd, "R") : "not scheduled"}` : "Disabled" },
-      { name: "Ticket Watcher", value: config.ticketTranscriptChannelId ? `Watching <#${config.ticketTranscriptChannelId}>` : "Not configured" },
-      { name: "Pending Tickets", value: String(pendingTickets), inline: true },
       ...(config.pointsEnabled ? [{ name: "Multiplier", value: formatMultiplier(activeMultiplier(config)), inline: true }] : [])
     )
     .setTimestamp();
@@ -1024,7 +959,7 @@ async function handleBackup(interaction: ChatInputCommandInteraction, { db, env 
 async function handleExport(interaction: ChatInputCommandInteraction, { db, env }: CommandContext, member: GuildMember) {
   await requireAdmin(db, member);
   await interaction.deferReply({ ephemeral: true });
-  const table = interaction.options.getString("table", true) as "cases" | "points" | "quotas" | "tickets";
+  const table = interaction.options.getString("table", true) as "cases" | "points" | "quotas";
   if (table === "points") assertPointsEnabled(db, interaction.guild!.id);
   const { filePath, rows } = await exportTable(db, env.exportDir, interaction.guild!.id, table);
   const attachment = new AttachmentBuilder(filePath);
@@ -1161,7 +1096,6 @@ function readSetupChannelOverrides(interaction: ChatInputCommandInteraction): Pa
     quota: getTextChannelOption(interaction, "quota_channel"),
     staffRegistration: getTextChannelOption(interaction, "staff_registration_channel"),
     auditLog: getTextChannelOption(interaction, "audit_channel"),
-    ticketTranscripts: getTextChannelOption(interaction, "ticket_transcripts_channel"),
     logBan: getTextChannelOption(interaction, "logingame_channel"),
     logStrike: getTextChannelOption(interaction, "logstrike_channel"),
     logRestore: getTextChannelOption(interaction, "logrestore_channel"),
@@ -1207,8 +1141,6 @@ function saveProvisionedConfig(db: AppDatabase, guildId: string, provisioned: Pr
     staff_registration_channel_id: provisioned.channels.staffRegistration.id,
     registration_role_id: provisioned.canRegisterRole.id,
     audit_channel_id: provisioned.channels.auditLog.id,
-    ticket_transcript_channel_id: provisioned.channels.ticketTranscripts.id,
-    ticket_alert_channel_id: provisioned.channels.logTicket.id,
     alert_channel_id: provisioned.channels.modAlerts.id,
     appeal_log_channel_id: provisioned.channels.logAppeal.id
   });
@@ -1250,13 +1182,12 @@ function savedChannelIdsFromConfig(db: AppDatabase, guildId: string): Partial<Re
     logStrike: db.getActionLogChannelId(guildId, "strike") ?? config.strikeLogChannelId,
     logRestore: db.getActionLogChannelId(guildId, "restore"),
     logDiscord: db.getActionLogChannelId(guildId, "discord") ?? db.getActionLogChannelId(guildId, "discord-ban"),
-    logTicket: db.getActionLogChannelId(guildId, "ticket") ?? config.ticketAlertChannelId,
+    logTicket: db.getActionLogChannelId(guildId, "ticket"),
     logAppeal: config.appealLogChannelId,
     quota: config.quotaChannelId,
     auditLog: config.auditChannelId,
     modAlerts: config.alertChannelId,
-    staffRegistration: config.staffRegistrationChannelId,
-    ticketTranscripts: config.ticketTranscriptChannelId
+    staffRegistration: config.staffRegistrationChannelId
   };
 }
 
@@ -1370,8 +1301,6 @@ async function handleConfigCheck(interaction: ChatInputCommandInteraction, db: A
     ch(config.quotaChannelId, "Quota Board"),
     ch(config.quotaAlertChannelId, "Quota Alerts"),
     ch(config.staffRegistrationChannelId, "Staff Registration"),
-    ch(config.ticketTranscriptChannelId, "Ticket Transcripts", true),
-    ch(config.ticketAlertChannelId, "Ticket Alerts", true),
     ch(config.evidenceArchiveChannelId, "Evidence Archive", true),
     ch(config.approvalChannelId, "CM Approval", true),
     ch(config.juniorHelpChannelId, "Junior Help", true)

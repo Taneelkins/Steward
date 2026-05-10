@@ -27,7 +27,6 @@ export const commandAccess = {
     removepoints: "head",
     multiplier: "head",
     quota: "junior",
-    ticketlog: "head",
     audit: "head",
     setup: "owner",
     update: "owner",

@@ -10,10 +10,7 @@ export type GuildConfig = {
   quotaAlertChannelId: string | null;
   staffRegistrationChannelId: string | null;
   registrationRoleId: string | null;
-  ticketTranscriptChannelId: string | null;
-  ticketAlertChannelId: string | null;
   ownerUserId: string | null;
-  ticketToolBotId: string | null;
   evidenceArchiveChannelId: string | null;
   appealLogChannelId: string | null;
   approvalChannelId: string | null;
@@ -39,7 +36,6 @@ export type GuildConfig = {
   quotaWarningSentAt: string | null;
   multiplierMilli: number;
   multiplierEndsAt: string | null;
-  lastTranscriptMessageId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -86,7 +82,6 @@ export type ModerationCase = {
   flags: string;
   isLate: boolean;
   isNoAction: boolean;
-  ticketId: string | null;
   transcriptUrl: string | null;
   mediaLinks: CaseMediaLink[];
   appealType: string | null;
@@ -107,24 +102,6 @@ export type CaseMediaLink = {
   url: string;
   kind: "image" | "video" | "file";
   sourceUrl?: string | null;
-};
-
-export type PendingTicketLog = {
-  id: number;
-  guildId: string;
-  transcriptMessageId: string;
-  transcriptChannelId: string;
-  ticketId: string | null;
-  ticketType: string;
-  openerUserId: string | null;
-  closedChannelId: string | null;
-  closedChannelName: string | null;
-  transcriptUrl: string | null;
-  status: "pending" | "logged" | "dismissed" | "needs_review" | "overdue";
-  createdAt: string;
-  dueAt: string;
-  loggedCaseId: number | null;
-  adminNotes: string | null;
 };
 
 export type QuotaMemberStatus = {

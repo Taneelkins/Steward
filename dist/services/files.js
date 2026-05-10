@@ -25,7 +25,5 @@ function readRows(db, guildId, table) {
             return db.all("SELECT * FROM point_ledger WHERE guild_id = ? ORDER BY id ASC", guildId);
         case "quotas":
             return db.all("SELECT * FROM quota_reports WHERE guild_id = ? ORDER BY id ASC", guildId);
-        case "tickets":
-            return db.all("SELECT * FROM pending_ticket_logs WHERE guild_id = ? ORDER BY id ASC", guildId);
     }
 }

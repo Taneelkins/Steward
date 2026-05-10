@@ -1,0 +1,42 @@
+2026-05-10 13:12:37 -04:00: (node:5956) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:12:37 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:14:13 -04:00: (node:15996) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:14:13 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:16:22 -04:00: (node:15996) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-05-10 13:17:24 -04:00: (node:16128) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:17:24 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:19:27 -04:00: (node:16128) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-05-10 13:21:25 -04:00: (node:20344) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:21:25 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:21:53 -04:00: (node:20344) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-05-10 13:40:18 -04:00: (node:5748) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:40:18 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:42:28 -04:00: (node:18088) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:42:28 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:47:37 -04:00: (node:18088) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-05-10 13:47:49 -04:00: (node:3328) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:47:49 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:47:54 -04:00: (node:20476) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:47:54 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:48:40 -04:00: (node:20476) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-05-10 13:54:36 -04:00: (node:8288) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:54:36 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:56:26 -04:00: (node:16140) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 13:56:26 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 13:59:28 -04:00: (node:16140) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-05-10 14:12:13 -04:00: (node:19096) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 14:12:13 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 14:12:18 -04:00: (node:8528) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 14:12:18 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 14:15:32 -04:00: (node:15768) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 14:15:32 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 14:16:29 -04:00: (node:15768) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-05-10 14:23:39 -04:00: (node:1244) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 14:23:39 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 14:44:10 -04:00: (node:1244) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-05-10 14:56:35 -04:00: (node:3292) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 14:56:35 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 14:56:53 -04:00: (node:3292) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+2026-05-10 14:58:43 -04:00: (node:4884) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+2026-05-10 14:58:43 -04:00: (Use `node --trace-warnings ...` to show where the warning was created)
+2026-05-10 15:07:32 -04:00: (node:4884) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.

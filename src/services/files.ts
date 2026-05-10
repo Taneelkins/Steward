@@ -14,7 +14,7 @@ export async function createBackup(db: AppDatabase, backupDir: string) {
   return backupPath;
 }
 
-export async function exportTable(db: AppDatabase, exportDir: string, guildId: string, table: "cases" | "points" | "quotas" | "tickets") {
+export async function exportTable(db: AppDatabase, exportDir: string, guildId: string, table: "cases" | "points" | "quotas") {
   await fs.mkdir(exportDir, { recursive: true });
   const filePath = path.join(exportDir, `${table}-${stamp()}.json`);
   const rows = readRows(db, guildId, table);
@@ -22,7 +22,7 @@ export async function exportTable(db: AppDatabase, exportDir: string, guildId: s
   return { filePath, rows };
 }
 
-function readRows(db: AppDatabase, guildId: string, table: "cases" | "points" | "quotas" | "tickets") {
+function readRows(db: AppDatabase, guildId: string, table: "cases" | "points" | "quotas") {
   switch (table) {
     case "cases":
       return db.all("SELECT * FROM moderation_cases WHERE guild_id = ? ORDER BY id ASC", guildId);
@@ -30,7 +30,5 @@ function readRows(db: AppDatabase, guildId: string, table: "cases" | "points" | 
       return db.all("SELECT * FROM point_ledger WHERE guild_id = ? ORDER BY id ASC", guildId);
     case "quotas":
       return db.all("SELECT * FROM quota_reports WHERE guild_id = ? ORDER BY id ASC", guildId);
-    case "tickets":
-      return db.all("SELECT * FROM pending_ticket_logs WHERE guild_id = ? ORDER BY id ASC", guildId);
   }
 }
