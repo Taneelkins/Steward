@@ -82,6 +82,9 @@ export class AppDatabase {
         this.run("INSERT OR IGNORE INTO strike_thresholds (guild_id, strike_count, label, created_at) VALUES (?, 3, 'Staff alert', ?)", guildId, timestamp);
         this.run("INSERT OR IGNORE INTO strike_thresholds (guild_id, strike_count, label, created_at) VALUES (?, 5, 'Urgent staff alert', ?)", guildId, timestamp);
     }
+    isLinkedCommunityServer(guildId) {
+        return Boolean(this.get("SELECT 1 FROM guild_configs WHERE linked_guild_id = ?", guildId));
+    }
     getGuildConfig(guildId) {
         this.ensureGuild(guildId);
         const row = this.get("SELECT * FROM guild_configs WHERE guild_id = ?", guildId);

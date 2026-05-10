@@ -136,6 +136,13 @@ export async function handleChatInputCommand(interaction, context) {
 async function handleSetup(interaction, { db }, member) {
     requireServerOwner(member);
     const guild = interaction.guild;
+    if (db.isLinkedCommunityServer(guild.id)) {
+        await interaction.reply({
+            content: "This server is registered as a linked community server. No channels or roles will be created here — the bot only needs its permissions to execute punishments. Use `/config behavior linked_server` in your log server to manage the link.",
+            ephemeral: true
+        });
+        return;
+    }
     const owner = interaction.options.getUser("owner", true);
     const categoryName = interaction.options.getString("category_name")?.trim() || "Mod Ledger";
     await interaction.deferReply({ ephemeral: true });
@@ -180,8 +187,15 @@ async function handleSetup(interaction, { db }, member) {
 }
 async function handleUpdate(interaction, { db }, member) {
     requireServerOwner(member);
-    await interaction.deferReply({ ephemeral: true });
     const guild = interaction.guild;
+    if (db.isLinkedCommunityServer(guild.id)) {
+        await interaction.reply({
+            content: "This server is a linked community server — nothing to update here.",
+            ephemeral: true
+        });
+        return;
+    }
+    await interaction.deferReply({ ephemeral: true });
     const config = db.getGuildConfig(guild.id);
     const provisioned = await provisionModerationServer(guild, {
         categoryName: interaction.options.getString("category_name")?.trim() || "Mod Ledger",

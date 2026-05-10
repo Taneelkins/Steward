@@ -136,6 +136,10 @@ export class AppDatabase {
     );
   }
 
+  isLinkedCommunityServer(guildId: string): boolean {
+    return Boolean(this.get("SELECT 1 FROM guild_configs WHERE linked_guild_id = ?", guildId));
+  }
+
   getGuildConfig(guildId: string): GuildConfig {
     this.ensureGuild(guildId);
     const row = this.get<GuildConfigRow>("SELECT * FROM guild_configs WHERE guild_id = ?", guildId);
