@@ -439,6 +439,7 @@ export async function handleApprovalButton(db, interaction) {
             embeds: [buildApprovalEmbed(record, "approved", interaction.user.id)],
             components: []
         });
+        await updateCaseLogAfterApproval(db, interaction.guild, record, "approved", interaction.user.id);
     }
     else {
         db.run("UPDATE moderation_cases SET approval_status = 'denied', updated_at = ? WHERE guild_id = ? AND id = ?", timestamp, interaction.guild.id, caseId);
@@ -446,8 +447,29 @@ export async function handleApprovalButton(db, interaction) {
             embeds: [buildApprovalEmbed(record, "denied", interaction.user.id)],
             components: []
         });
+        await updateCaseLogAfterApproval(db, interaction.guild, record, "denied", interaction.user.id);
     }
     return true;
+}
+async function updateCaseLogAfterApproval(db, guild, record, status, reviewerUserId) {
+    if (!record.logChannelId || !record.logMessageId)
+        return;
+    const channel = await getTextChannel(guild, record.logChannelId);
+    if (!channel)
+        return;
+    const msg = await channel.messages.fetch(record.logMessageId).catch(() => null);
+    if (!msg)
+        return;
+    const config = db.getGuildConfig(guild.id);
+    const updatedRecord = db.getCase(guild.id, record.id) ?? record;
+    const embed = buildCaseLogEmbed(updatedRecord, { showPoints: config.pointsEnabled });
+    const statusLabel = status === "approved" ? "✅ Approved" : "❌ Denied";
+    embed.addFields({ name: "CM Approval", value: `${statusLabel} by <@${reviewerUserId}>`, inline: false });
+    const linkComponents = caseLinkComponents(updatedRecord.transcriptUrl, updatedRecord.mediaLinks);
+    await msg.edit({
+        embeds: [embed],
+        components: linkComponents.length > 0 ? linkComponents : []
+    }).catch(() => null);
 }
 export async function refreshApprovalChannel(db, guild) {
     const config = db.getGuildConfig(guild.id);
