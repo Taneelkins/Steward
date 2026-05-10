@@ -214,7 +214,7 @@ async function handleSetup(interaction: ChatInputCommandInteraction, { db }: Com
     ].map((channel) => `<#${channel.id}>`).join(", ")}`,
     ownerWarnings.length > 0 ? `Warnings: ${ownerWarnings.join(" ")}` : null
   ].filter(Boolean);
-  await interaction.editReply({ content: lines.join("\n"), embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))] });
+  await interaction.editReply({ content: lines.join("\n"), embeds: [configEmbed(db, guild.id)] });
 }
 
 async function handleUpdate(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
@@ -241,7 +241,7 @@ async function handleUpdate(interaction: ChatInputCommandInteraction, { db }: Co
     `Checked channels: ${Object.values(provisioned.channels).map((channel) => `<#${channel.id}>`).join(", ")}`,
     provisioned.warnings.length > 0 ? `Warnings: ${provisioned.warnings.join(" ")}` : "No missing setup items found."
   ];
-  await interaction.editReply({ content: truncate(repaired.join("\n"), 1900), embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))] });
+  await interaction.editReply({ content: truncate(repaired.join("\n"), 1900), embeds: [configEmbed(db, guild.id)] });
 }
 
 async function handleHelp(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
@@ -385,7 +385,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
       legacyModRoleId: roleUpdates.legacyModRole?.id,
       legacyAdminRoleId: roleUpdates.legacyAdminRole?.id
     });
-    await interaction.reply({ embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))], ephemeral: true });
+    await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
     return;
   }
 
@@ -395,7 +395,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
       interactive_log_enabled: interactiveLog === null ? undefined : interactiveLog ? 1 : 0
     });
     await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog });
-    await interaction.reply({ embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))], ephemeral: true });
+    await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
     return;
   }
 
@@ -422,7 +422,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     ...values,
     actionLogs: actionLogUpdates.map((update) => ({ actionName: update.actionName, channelId: update.channel.id }))
   });
-  await interaction.reply({ embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))], ephemeral: true });
+  await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
 }
 
 async function handleModshop(interaction: ChatInputCommandInteraction, { db, env }: CommandContext, member: GuildMember) {
@@ -1082,7 +1082,7 @@ function upsertStaffRole(db: AppDatabase, guildId: string, key: StaffRoleKey, ro
 
 function readConfigActionLogChannelUpdates(interaction: ChatInputCommandInteraction) {
   const mappings = [
-    { option: "logban", actionName: "ban" },
+    { option: "logingame", actionName: "ban" },
     { option: "logstrike", actionName: "strike" },
     { option: "logrestore", actionName: "restore" },
     { option: "logdiscord", actionName: "discord" },
@@ -1132,7 +1132,7 @@ function readSetupChannelOverrides(interaction: ChatInputCommandInteraction): Pa
     staffRegistration: getTextChannelOption(interaction, "staff_registration_channel"),
     auditLog: getTextChannelOption(interaction, "audit_channel"),
     ticketTranscripts: getTextChannelOption(interaction, "ticket_transcripts_channel"),
-    logBan: getTextChannelOption(interaction, "logban_channel"),
+    logBan: getTextChannelOption(interaction, "logingame_channel"),
     logStrike: getTextChannelOption(interaction, "logstrike_channel"),
     logRestore: getTextChannelOption(interaction, "logrestore_channel"),
     logDiscord: getTextChannelOption(interaction, "logdiscord_channel"),
@@ -1244,6 +1244,12 @@ function normalizeStoredRoleKey(key: string, name: string): StaffRoleKey | null 
 
 function isStaffRoleKey(value: string): value is StaffRoleKey {
   return ["staff", "juniorMod", "mod", "seniorMod", "headMod", "communityManager"].includes(value);
+}
+
+function configEmbed(db: AppDatabase, guildId: string) {
+  return configSummaryEmbed(db.getGuildConfig(guildId), {
+    ingameLogChannelId: db.getActionLogChannelId(guildId, "ban")
+  });
 }
 
 function requireServerOwner(member: GuildMember) {

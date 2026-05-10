@@ -168,7 +168,7 @@ async function handleSetup(interaction, { db }, member) {
         ].map((channel) => `<#${channel.id}>`).join(", ")}`,
         ownerWarnings.length > 0 ? `Warnings: ${ownerWarnings.join(" ")}` : null
     ].filter(Boolean);
-    await interaction.editReply({ content: lines.join("\n"), embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))] });
+    await interaction.editReply({ content: lines.join("\n"), embeds: [configEmbed(db, guild.id)] });
 }
 async function handleUpdate(interaction, { db }, member) {
     requireServerOwner(member);
@@ -194,7 +194,7 @@ async function handleUpdate(interaction, { db }, member) {
         `Checked channels: ${Object.values(provisioned.channels).map((channel) => `<#${channel.id}>`).join(", ")}`,
         provisioned.warnings.length > 0 ? `Warnings: ${provisioned.warnings.join(" ")}` : "No missing setup items found."
     ];
-    await interaction.editReply({ content: truncate(repaired.join("\n"), 1900), embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))] });
+    await interaction.editReply({ content: truncate(repaired.join("\n"), 1900), embeds: [configEmbed(db, guild.id)] });
 }
 async function handleHelp(interaction, { db }, member) {
     await replyHelpMenu(interaction, db, member);
@@ -322,7 +322,7 @@ async function handleConfig(interaction, { db }, member) {
             legacyModRoleId: roleUpdates.legacyModRole?.id,
             legacyAdminRoleId: roleUpdates.legacyAdminRole?.id
         });
-        await interaction.reply({ embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))], ephemeral: true });
+        await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
         return;
     }
     if (subcommand === "behavior") {
@@ -331,7 +331,7 @@ async function handleConfig(interaction, { db }, member) {
             interactive_log_enabled: interactiveLog === null ? undefined : interactiveLog ? 1 : 0
         });
         await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog });
-        await interaction.reply({ embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))], ephemeral: true });
+        await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
         return;
     }
     const actionLogUpdates = readConfigActionLogChannelUpdates(interaction);
@@ -357,7 +357,7 @@ async function handleConfig(interaction, { db }, member) {
         ...values,
         actionLogs: actionLogUpdates.map((update) => ({ actionName: update.actionName, channelId: update.channel.id }))
     });
-    await interaction.reply({ embeds: [configSummaryEmbed(db.getGuildConfig(guild.id))], ephemeral: true });
+    await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
 }
 async function handleModshop(interaction, { db, env }, member) {
     await requireAdmin(db, member);
@@ -874,7 +874,7 @@ function upsertStaffRole(db, guildId, key, role) {
 }
 function readConfigActionLogChannelUpdates(interaction) {
     const mappings = [
-        { option: "logban", actionName: "ban" },
+        { option: "logingame", actionName: "ban" },
         { option: "logstrike", actionName: "strike" },
         { option: "logrestore", actionName: "restore" },
         { option: "logdiscord", actionName: "discord" },
@@ -913,7 +913,7 @@ function readSetupChannelOverrides(interaction) {
         staffRegistration: getTextChannelOption(interaction, "staff_registration_channel"),
         auditLog: getTextChannelOption(interaction, "audit_channel"),
         ticketTranscripts: getTextChannelOption(interaction, "ticket_transcripts_channel"),
-        logBan: getTextChannelOption(interaction, "logban_channel"),
+        logBan: getTextChannelOption(interaction, "logingame_channel"),
         logStrike: getTextChannelOption(interaction, "logstrike_channel"),
         logRestore: getTextChannelOption(interaction, "logrestore_channel"),
         logDiscord: getTextChannelOption(interaction, "logdiscord_channel"),
@@ -1023,6 +1023,11 @@ function normalizeStoredRoleKey(key, name) {
 }
 function isStaffRoleKey(value) {
     return ["staff", "juniorMod", "mod", "seniorMod", "headMod", "communityManager"].includes(value);
+}
+function configEmbed(db, guildId) {
+    return configSummaryEmbed(db.getGuildConfig(guildId), {
+        ingameLogChannelId: db.getActionLogChannelId(guildId, "ban")
+    });
 }
 function requireServerOwner(member) {
     if (member.id !== member.guild.ownerId)

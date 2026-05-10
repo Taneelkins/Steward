@@ -169,7 +169,7 @@ export async function requireMod(db: AppDatabase, member: GuildMember) {
   }
 }
 
-export function configSummaryEmbed(config: GuildConfig) {
+export function configSummaryEmbed(config: GuildConfig, extra: { ingameLogChannelId?: string | null } = {}) {
   return new EmbedBuilder()
     .setTitle("Bot Configuration")
     .setColor(colors.voidPurple)
@@ -178,7 +178,8 @@ export function configSummaryEmbed(config: GuildConfig) {
       { name: "Admin Role", value: config.adminRoleId ? `<@&${config.adminRoleId}>` : "Not set", inline: true },
       { name: "Owner DM", value: config.ownerUserId ? `<@${config.ownerUserId}>` : "Not set", inline: true },
       { name: "Action Logs", value: config.actionLogChannelId ? `<#${config.actionLogChannelId}>` : "Not set", inline: true },
-      { name: "Appeal Logs", value: config.appealLogChannelId ? `<#${config.appealLogChannelId}>` : "Not set", inline: true },
+      { name: "Ingame Log", value: extra.ingameLogChannelId ? `<#${extra.ingameLogChannelId}>` : "Not set", inline: true },
+      { name: "Appeal Log", value: config.appealLogChannelId ? `<#${config.appealLogChannelId}>` : "Not set", inline: true },
       { name: "Quota", value: config.quotaChannelId ? `<#${config.quotaChannelId}>` : "Not set", inline: true },
       { name: "Staff Registration", value: config.staffRegistrationChannelId ? `<#${config.staffRegistrationChannelId}>` : "Not set", inline: true },
       { name: "Can Register", value: config.registrationRoleId ? `<@&${config.registrationRoleId}>` : "Not set", inline: true },
