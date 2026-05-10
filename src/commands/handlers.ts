@@ -331,9 +331,15 @@ async function handleQuickLog(interaction: ChatInputCommandInteraction, { db }: 
   await submitTypedLog(interaction, db, member, actionName, actionDisplayName);
 }
 
+const TRANSCRIPT_REQUIRED_ACTIONS = new Set(["ticket", "discord", "discord-ban", "ban"]);
+
 async function submitTypedLog(interaction: ChatInputCommandInteraction, db: AppDatabase, member: GuildMember, actionName: string, actionDisplayName?: string | null) {
   const guild = interaction.guild!;
   const transcriptLink = interaction.options.getString("transcript_link");
+  if (TRANSCRIPT_REQUIRED_ACTIONS.has(actionName) && !transcriptLink) {
+    await interaction.reply({ content: `A transcript link is required for ${actionDisplayName ?? actionName} logs.`, ephemeral: true });
+    return;
+  }
   const evidence = interaction.options.getString("evidence") ?? (transcriptLink ? "See transcript." : null);
   const appealType = interaction.options.getString("appeal_type");
   const rawResult = interaction.options.getString("appeal_result")?.toLowerCase();

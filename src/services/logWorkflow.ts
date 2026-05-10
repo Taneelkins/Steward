@@ -1068,11 +1068,14 @@ function discordSubTypeStyle(id: string) {
   return ButtonStyle.Secondary;
 }
 
+const TRANSCRIPT_REQUIRED_ACTIONS = new Set(["ticket", "discord", "discord-ban", "ban"]);
+
 function missingRequiredFields(db: AppDatabase, draft: LogDraft) {
   const missing: string[] = [];
   if (!draft.actionName) missing.push("Action");
   if (!hasTarget(draft.targetInfo)) missing.push("Target");
   if (draft.actionName === "appeal" && !draft.appealResult) missing.push("Appeal Result");
+  if (draft.actionName && TRANSCRIPT_REQUIRED_ACTIONS.has(draft.actionName) && !draft.transcriptUrl) missing.push("Transcript Link");
   return missing;
 }
 

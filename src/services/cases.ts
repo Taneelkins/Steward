@@ -697,10 +697,11 @@ async function updateCaseLogAfterApproval(
   const embed = buildCaseLogEmbed(updatedRecord, { showPoints: config.pointsEnabled });
   const statusLabel = status === "approved" ? "✅ Approved" : "❌ Denied";
   embed.addFields({ name: "CM Approval", value: `${statusLabel} by <@${reviewerUserId}>`, inline: false });
+  const executeRow = status === "approved" ? buildExecutePunishmentButton(updatedRecord, config) : null;
   const linkComponents = caseLinkComponents(updatedRecord.transcriptUrl, updatedRecord.mediaLinks);
   await msg.edit({
     embeds: [embed],
-    components: linkComponents.length > 0 ? linkComponents : []
+    components: [...(executeRow ? [executeRow] : []), ...linkComponents]
   }).catch(() => null);
 }
 
@@ -1145,6 +1146,22 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
   // ── Standard punishment execution ────────────────────────────────────────
   const punishment = mapCaseToPunishment(record);
   const actionLabel = punishment.kind === "ban" ? "banned" : punishment.kind === "kick" ? "kicked" : punishment.kind === "timeout" ? "timed out" : "warned";
+
+  // Check if the user is already punished
+  if (punishment.kind === "ban") {
+    const existingBan = await linkedGuild.bans.fetch(discordTargetId).catch(() => null);
+    if (existingBan) {
+      await interaction.editReply(`⚠️ <@${discordTargetId}> is already banned from **${linkedGuild.name}**. No action taken.`);
+      return true;
+    }
+  } else if (punishment.kind === "timeout") {
+    const member = await linkedGuild.members.fetch(discordTargetId).catch(() => null);
+    if (member?.communicationDisabledUntil && member.communicationDisabledUntil.getTime() > Date.now()) {
+      const until = `<t:${Math.floor(member.communicationDisabledUntil.getTime() / 1000)}:R>`;
+      await interaction.editReply(`⚠️ <@${discordTargetId}> is already timed out in **${linkedGuild.name}** (expires ${until}). No action taken.`);
+      return true;
+    }
+  }
 
   // DM before banning so the message can reach them
   if (targetUser) {

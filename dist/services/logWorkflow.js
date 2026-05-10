@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, PermissionFlagsBits, TextInputBuilder, TextInputStyle } from "discord.js";
-import { buildCaseLogEmbed, createCase, effectiveActionPoints, formatLoggedActionName, resubmitJuniorReviewCase } from "./cases.js";
+import { buildCaseLogEmbed, buildExecutePunishmentButton, createCase, effectiveActionPoints, formatLoggedActionName, resubmitJuniorReviewCase } from "./cases.js";
 import { formatPoints, truncate } from "../utils/format.js";
 import { caseLinkComponents, getTextChannel } from "../utils/discord.js";
 import { getStaffTier } from "../utils/discord.js";
@@ -684,6 +684,7 @@ function saveModalFields(draft, modalType, interaction) {
     draft.notes = clean(interaction.fields.getTextInputValue("notes"));
 }
 async function submitDraft(db, interaction, draft) {
+    draft.stage = "submitting";
     if (draft.editCaseId) {
         await resubmitEditedDraft(db, interaction, draft);
         return;
@@ -720,11 +721,13 @@ async function submitDraft(db, interaction, draft) {
         happenedAt: draft.happenedAt
     });
     removeDraft(draft);
-    const pointsEnabled = db.getGuildConfig(draft.guildId).pointsEnabled;
+    const config2 = db.getGuildConfig(draft.guildId);
+    const executeRow = buildExecutePunishmentButton(record, config2);
+    const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
     await interaction.update({
-        content: pointsEnabled ? `Submitted case #${record.id} for ${formatPoints(record.awardedPointsMilli)} points.` : `Submitted case #${record.id}.`,
-        embeds: [buildCaseLogEmbed(record, { showPoints: pointsEnabled })],
-        components: caseLinkComponents(record.transcriptUrl, record.mediaLinks)
+        content: config2.pointsEnabled ? `Submitted case #${record.id} for ${formatPoints(record.awardedPointsMilli)} points.` : `Submitted case #${record.id}.`,
+        embeds: [buildCaseLogEmbed(record, { showPoints: config2.pointsEnabled })],
+        components: [...(executeRow ? [executeRow] : []), ...linkRows]
     });
 }
 async function resubmitEditedDraft(db, interaction, draft) {
@@ -873,6 +876,7 @@ function discordSubTypeStyle(id) {
         return ButtonStyle.Primary;
     return ButtonStyle.Secondary;
 }
+const TRANSCRIPT_REQUIRED_ACTIONS = new Set(["ticket", "discord", "discord-ban", "ban"]);
 function missingRequiredFields(db, draft) {
     const missing = [];
     if (!draft.actionName)
@@ -881,6 +885,8 @@ function missingRequiredFields(db, draft) {
         missing.push("Target");
     if (draft.actionName === "appeal" && !draft.appealResult)
         missing.push("Appeal Result");
+    if (draft.actionName && TRANSCRIPT_REQUIRED_ACTIONS.has(draft.actionName) && !draft.transcriptUrl)
+        missing.push("Transcript Link");
     return missing;
 }
 function addMediaLinks(draft, message) {
