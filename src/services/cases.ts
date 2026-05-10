@@ -1,5 +1,5 @@
-import type { Guild, GuildMember, User } from "discord.js";
-import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, EmbedBuilder, ModalBuilder, ModalSubmitInteraction, PermissionFlagsBits, TextInputBuilder, TextInputStyle } from "discord.js";
+import type { Guild, GuildMember, TextChannel, User } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChannelType, EmbedBuilder, ModalBuilder, ModalSubmitInteraction, PermissionFlagsBits, TextInputBuilder, TextInputStyle } from "discord.js";
 import type { AppDatabase } from "../db.js";
 import type { ActionPreset, CaseMediaLink, ModerationCase } from "../types.js";
 import { formatMultiplier, formatPoints, truncate } from "../utils/format.js";
@@ -349,14 +349,12 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
       });
     }
     const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
-    const executeRow = buildExecutePunishmentButton(record, config);
-    const components = [...(executeRow ? [executeRow] : []), ...linkComponents];
     const appealChannel = actionName === "appeal" ? config.appealLogChannelId : null;
     const logChannel = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
     await postToConfiguredChannel(input.guild, logChannel, {
       ...(juniorEscalation ? { content: `${juniorEscalation.mentions} Junior Moderator log needs review.` } : {}),
       embeds: [embed],
-      ...(components.length > 0 ? { components } : {}),
+      ...(linkComponents.length > 0 ? { components: linkComponents } : {}),
       ...(juniorEscalation?.roleIds.length ? { allowedMentions: { roles: juniorEscalation.roleIds, users: juniorEscalation.userIds } } : {})
     });
     if (requiresApproval) {
@@ -947,16 +945,42 @@ function extractDiscordTargetId(record: ModerationCase): string | null {
   return null;
 }
 
-function parsePunishmentLength(value: string | null): number | null {
+export function parsePunishmentLength(value: string | null): number | null {
   if (!value) return null;
-  const match = /(\d+)\s*(d(?:ays?)?|h(?:ours?)?|m(?:ins?)?(?:utes?)?)/i.exec(value);
-  if (!match) return null;
-  const n = parseInt(match[1], 10);
-  const unit = match[2][0].toLowerCase();
-  if (unit === "d") return n * 24 * 60 * 60 * 1000;
-  if (unit === "h") return n * 60 * 60 * 1000;
-  if (unit === "m") return n * 60 * 1000;
-  return null;
+  const s = value.trim();
+  // Units in descending specificity so "months" is checked before bare "m"
+  const patterns: [RegExp, number][] = [
+    [/(\d+)\s*(?:years?|yrs?)\b/gi,           365 * 24 * 3600_000],
+    [/(\d+)\s*months?\b/gi,                    30  * 24 * 3600_000],
+    [/(\d+)\s*(?:weeks?|wks?)\b/gi,            7   * 24 * 3600_000],
+    [/(\d+)\s*days?\b/gi,                      24  * 3600_000],
+    [/(\d+)\s*hours?\b/gi,                     3600_000],
+    [/(\d+)\s*(?:minutes?|mins?)\b/gi,         60_000],
+    [/(\d+)\s*(?:seconds?|secs?)\b/gi,         1000],
+    [/(\d+)\s*y(?!\w)/gi,                      365 * 24 * 3600_000],
+    [/(\d+)\s*mo(?!\w)/gi,                     30  * 24 * 3600_000],
+    [/(\d+)\s*w(?!\w)/gi,                      7   * 24 * 3600_000],
+    [/(\d+)\s*d(?!\w)/gi,                      24  * 3600_000],
+    [/(\d+)\s*h(?!\w)/gi,                      3600_000],
+    [/(\d+)\s*m(?!\w)/gi,                      60_000],
+    [/(\d+)\s*s(?!\w)/gi,                      1000],
+  ];
+  // Track which character positions have already been matched to avoid double-counting
+  const consumed = new Set<number>();
+  let total = 0;
+  let matched = false;
+  for (const [re, mult] of patterns) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s)) !== null) {
+      if (!consumed.has(m.index)) {
+        for (let i = m.index; i < m.index + m[0].length; i++) consumed.add(i);
+        total += parseInt(m[1], 10) * mult;
+        matched = true;
+      }
+    }
+  }
+  return matched ? total : null;
 }
 
 function mapCaseToPunishment(record: ModerationCase): DiscordPunishment {
@@ -971,14 +995,17 @@ function mapCaseToPunishment(record: ModerationCase): DiscordPunishment {
   return { kind: "warn" };
 }
 
-function buildExecutePunishmentButton(record: ModerationCase, config: { linkedGuildId: string | null }): ActionRowBuilder<ButtonBuilder> | null {
+export function buildExecutePunishmentButton(record: ModerationCase, config: { linkedGuildId: string | null }): ActionRowBuilder<ButtonBuilder> | null {
   if (!config.linkedGuildId) return null;
   if (!extractDiscordTargetId(record)) return null;
+  const isAppealAccept = record.actionName === "appeal" && record.appealResult === "accepted";
+  const label = isAppealAccept ? "✅ Reverse Punishment" : "⚡ Execute Punishment";
+  const style = isAppealAccept ? ButtonStyle.Success : ButtonStyle.Danger;
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`execute_punishment:${record.id}`)
-      .setLabel("⚡ Execute Punishment")
-      .setStyle(ButtonStyle.Danger)
+      .setLabel(label)
+      .setStyle(style)
   );
 }
 
@@ -997,29 +1024,89 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
     return true;
   }
 
+  if (interaction.user.id !== record.moderatorUserId) {
+    await interaction.editReply("Only the moderator who submitted this case can execute the punishment.");
+    return true;
+  }
+
   const config = db.getGuildConfig(interaction.guild.id);
   if (!config.linkedGuildId) {
-    await interaction.editReply("No linked community server is configured. Set one with `/config behavior linked_server:<guild_id>`.");
+    await interaction.editReply("No linked community server configured. Use `/config behavior linked_server:<guild_id>`.");
     return true;
   }
 
   const discordTargetId = extractDiscordTargetId(record);
   if (!discordTargetId) {
-    await interaction.editReply("This case has no Discord user ID. Can only execute punishments on Discord targets.");
+    await interaction.editReply("This case has no Discord user ID. Punishments can only be executed on Discord targets.");
     return true;
   }
 
   const linkedGuild = await interaction.client.guilds.fetch(config.linkedGuildId).catch(() => null);
   if (!linkedGuild) {
-    await interaction.editReply(`Cannot access linked server \`${config.linkedGuildId}\`. Make sure the bot has joined that server.`);
+    await interaction.editReply(`Cannot access linked server \`${config.linkedGuildId}\`. Make sure the bot has joined it.`);
     return true;
   }
 
+  const targetUser = await interaction.client.users.fetch(discordTargetId).catch(() => null);
+  const auditReason = `${record.actionDisplayName ?? record.actionName}: ${record.reason}`.slice(0, 512);
+
+  // ── Appeal accepted: reverse the punishment ──────────────────────────────
+  if (record.actionName === "appeal" && record.appealResult === "accepted") {
+    const appealTypeLower = (record.appealType ?? "").toLowerCase();
+    let resultMsg = "";
+    let inviteUrl: string | null = null;
+
+    try {
+      if (appealTypeLower.includes("ban")) {
+        await linkedGuild.members.unban(discordTargetId, `Appeal #${record.id} accepted`);
+        resultMsg = `<@${discordTargetId}> has been **unbanned** from **${linkedGuild.name}**.`;
+        const ch = linkedGuild.channels.cache.find(c => c.type === ChannelType.GuildText) as TextChannel | undefined;
+        const invite = ch ? await ch.createInvite({ maxAge: 7 * 24 * 3600, maxUses: 1, reason: `Appeal #${record.id} accepted` }).catch(() => null) : null;
+        inviteUrl = invite?.url ?? null;
+      } else if (appealTypeLower.includes("timeout") || appealTypeLower.includes("mute")) {
+        const member = await linkedGuild.members.fetch(discordTargetId).catch(() => null);
+        if (!member) throw new Error("User is not in the linked server.");
+        await member.timeout(null, `Appeal #${record.id} accepted`);
+        resultMsg = `<@${discordTargetId}>'s timeout has been **removed** in **${linkedGuild.name}**.`;
+      } else if (appealTypeLower.includes("kick")) {
+        resultMsg = `Kick reversed (informational — cannot undo a kick).`;
+        const ch = linkedGuild.channels.cache.find(c => c.type === ChannelType.GuildText) as TextChannel | undefined;
+        const invite = ch ? await ch.createInvite({ maxAge: 7 * 24 * 3600, maxUses: 1, reason: `Appeal #${record.id} accepted` }).catch(() => null) : null;
+        inviteUrl = invite?.url ?? null;
+      } else {
+        resultMsg = `Appeal accepted (no automatic reversal for appeal type: ${record.appealType ?? "unknown"}).`;
+      }
+    } catch (err) {
+      await interaction.editReply(`❌ Failed to reverse punishment: ${err instanceof Error ? err.message : "Unknown error."}`);
+      return true;
+    }
+
+    if (targetUser) {
+      const dmLines = [
+        `**Your appeal has been accepted.**`,
+        ``,
+        `**Case:** #${record.id}`,
+        record.appealType ? `**Appeal Type:** ${record.appealType}` : null,
+        `**Reviewed by:** ${interaction.user.username}`,
+        inviteUrl ? `\n**Rejoin ${linkedGuild.name}:** ${inviteUrl}` : null
+      ].filter(Boolean).join("\n");
+      await targetUser.send(dmLines).catch(() => null);
+    }
+
+    await writeAuditAndPost(db, interaction.guild, interaction.user.id, "punishment.reversed", {
+      caseId: record.id, discordTargetId, linkedGuildId: config.linkedGuildId, appealType: record.appealType
+    });
+
+    const dmNote = targetUser ? " DM sent." : " (Could not DM user.)";
+    await interaction.editReply(`✅ ${resultMsg}${inviteUrl ? ` Invite: ${inviteUrl}` : ""}${dmNote}`);
+    return true;
+  }
+
+  // ── Standard punishment execution ────────────────────────────────────────
   const punishment = mapCaseToPunishment(record);
   const actionLabel = punishment.kind === "ban" ? "banned" : punishment.kind === "kick" ? "kicked" : punishment.kind === "timeout" ? "timed out" : "warned";
 
-  // DM before banning so the message can go through
-  const targetUser = await interaction.client.users.fetch(discordTargetId).catch(() => null);
+  // DM before banning so the message can reach them
   if (targetUser) {
     const dmLines = [
       `**You have been ${actionLabel}${punishment.kind !== "warn" ? ` in ${linkedGuild.name}` : ""}.** `,
@@ -1027,11 +1114,9 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
       `**Action:** ${record.actionDisplayName ?? record.actionName}`,
       `**Reason:** ${record.reason}`,
       record.evidence ? `**Evidence:** ${record.evidence}` : null,
-      punishment.kind === "timeout" ? `**Duration:** ${record.punishmentLength ?? "1 hour"}` : null,
+      punishment.kind === "timeout" ? `**Duration:** ${record.punishmentLength ?? "unknown"}` : null,
       ``,
-      config.moderationInvite
-        ? `To appeal, join the moderation server: ${config.moderationInvite}`
-        : null
+      config.moderationInvite ? `To appeal: ${config.moderationInvite}` : null
     ].filter(Boolean).join("\n");
     await targetUser.send(dmLines).catch(() => null);
   }
@@ -1040,18 +1125,20 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
   let errorMsg = "";
   try {
     if (punishment.kind === "ban") {
-      await linkedGuild.members.ban(discordTargetId, {
-        reason: `${record.actionDisplayName ?? record.actionName}: ${record.reason}`.slice(0, 512),
-        deleteMessageSeconds: 0
-      });
+      await linkedGuild.members.ban(discordTargetId, { reason: auditReason, deleteMessageSeconds: 0 });
     } else if (punishment.kind === "kick") {
       const member = await linkedGuild.members.fetch(discordTargetId).catch(() => null);
       if (!member) { success = false; errorMsg = "User is not in the linked server."; }
-      else await member.kick(`${record.actionDisplayName ?? record.actionName}: ${record.reason}`.slice(0, 512));
+      else await member.kick(auditReason);
     } else if (punishment.kind === "timeout") {
       const member = await linkedGuild.members.fetch(discordTargetId).catch(() => null);
       if (!member) { success = false; errorMsg = "User is not in the linked server."; }
-      else await member.timeout(punishment.durationMs, `${record.actionDisplayName ?? record.actionName}: ${record.reason}`.slice(0, 512));
+      else {
+        const MAX_TIMEOUT = 27 * 24 * 60 * 60 * 1000; // 27 days (safely under Discord's 28-day limit)
+        const capped = Math.min(punishment.durationMs, MAX_TIMEOUT);
+        await member.timeout(capped, auditReason);
+        if (capped < punishment.durationMs) errorMsg = `(Duration capped at 27 days — Discord's maximum)`;
+      }
     }
   } catch (err) {
     success = false;
@@ -1059,14 +1146,15 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
   }
 
   await writeAuditAndPost(db, interaction.guild, interaction.user.id, "punishment.executed", {
-    caseId: record.id, discordTargetId, linkedGuildId: config.linkedGuildId, action: punishment.kind, success, error: errorMsg || undefined
+    caseId: record.id, discordTargetId, linkedGuildId: config.linkedGuildId, action: punishment.kind, success, error: success ? undefined : errorMsg
   });
 
   if (success) {
-    const dmNote = targetUser ? " A DM was sent." : " (Could not DM user.)";
-    await interaction.editReply(`✅ <@${discordTargetId}> has been ${actionLabel} in **${linkedGuild.name}**.${dmNote}`);
+    const dmNote = targetUser ? " DM sent." : " (Could not DM user.)";
+    const capNote = errorMsg ? `\n⚠️ ${errorMsg}` : "";
+    await interaction.editReply(`✅ <@${discordTargetId}> has been ${actionLabel} in **${linkedGuild.name}**.${dmNote}${capNote}`);
   } else {
-    await interaction.editReply(`❌ Failed to ${punishment.kind} \`${discordTargetId}\`: ${errorMsg}\n\nCheck that the bot has the required permissions in the linked server.`);
+    await interaction.editReply(`❌ Failed to ${punishment.kind} \`${discordTargetId}\`: ${errorMsg}\n\nCheck bot permissions in the linked server.`);
   }
   return true;
 }

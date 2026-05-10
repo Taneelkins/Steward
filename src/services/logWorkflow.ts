@@ -18,7 +18,7 @@ import {
 } from "discord.js";
 import type { Attachment, Message, TextChannel } from "discord.js";
 import type { AppDatabase } from "../db.js";
-import { buildCaseLogEmbed, createCase, effectiveActionPoints, formatLoggedActionName, resubmitJuniorReviewCase, type CaseTarget } from "./cases.js";
+import { buildCaseLogEmbed, buildExecutePunishmentButton, createCase, effectiveActionPoints, formatLoggedActionName, parsePunishmentLength, resubmitJuniorReviewCase, type CaseTarget } from "./cases.js";
 import type { CaseMediaLink, ModerationCase } from "../types.js";
 import { formatPoints, truncate } from "../utils/format.js";
 import { caseLinkComponents, getTextChannel } from "../utils/discord.js";
@@ -875,11 +875,13 @@ async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draf
   });
 
   removeDraft(draft);
-  const pointsEnabled = db.getGuildConfig(draft.guildId).pointsEnabled;
+  const config2 = db.getGuildConfig(draft.guildId);
+  const executeRow = buildExecutePunishmentButton(record, config2);
+  const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
   await interaction.update({
-    content: pointsEnabled ? `Submitted case #${record.id} for ${formatPoints(record.awardedPointsMilli)} points.` : `Submitted case #${record.id}.`,
-    embeds: [buildCaseLogEmbed(record, { showPoints: pointsEnabled })],
-    components: caseLinkComponents(record.transcriptUrl, record.mediaLinks)
+    content: config2.pointsEnabled ? `Submitted case #${record.id} for ${formatPoints(record.awardedPointsMilli)} points.` : `Submitted case #${record.id}.`,
+    embeds: [buildCaseLogEmbed(record, { showPoints: config2.pointsEnabled })],
+    components: [...(executeRow ? [executeRow] : []), ...linkRows]
   });
 }
 
@@ -1055,6 +1057,9 @@ function missingRequiredFields(db: AppDatabase, draft: LogDraft) {
   if (!draft.actionName) missing.push("Action");
   if (!hasTarget(draft.targetInfo)) missing.push("Target");
   if (draft.actionName === "appeal" && !draft.appealResult) missing.push("Appeal Result");
+  const displayLower = ((draft.actionDisplayName ?? draft.actionName) ?? "").toLowerCase();
+  const needsDuration = displayLower.includes("timeout") || displayLower.includes("mute");
+  if (needsDuration && !draft.punishmentLength) missing.push("Duration (required for timeout/mute)");
   return missing;
 }
 
