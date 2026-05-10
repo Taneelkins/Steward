@@ -1057,9 +1057,6 @@ function missingRequiredFields(db: AppDatabase, draft: LogDraft) {
   if (!draft.actionName) missing.push("Action");
   if (!hasTarget(draft.targetInfo)) missing.push("Target");
   if (draft.actionName === "appeal" && !draft.appealResult) missing.push("Appeal Result");
-  const displayLower = ((draft.actionDisplayName ?? draft.actionName) ?? "").toLowerCase();
-  const needsDuration = displayLower.includes("timeout") || displayLower.includes("mute");
-  if (needsDuration && !draft.punishmentLength) missing.push("Duration (required for timeout/mute)");
   return missing;
 }
 

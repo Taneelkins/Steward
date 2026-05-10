@@ -989,7 +989,8 @@ function mapCaseToPunishment(record: ModerationCase): DiscordPunishment {
   if (display.includes("kick")) return { kind: "kick" };
   if (display.includes("timeout") || display.includes("mute")) {
     const raw = parsePunishmentLength(record.punishmentLength);
-    const durationMs = raw ? Math.min(Math.max(raw, 60_000), 28 * 24 * 60 * 60 * 1000) : 60 * 60 * 1000;
+    const MAX_TIMEOUT = 27 * 24 * 60 * 60 * 1000;
+    const durationMs = raw ? Math.min(Math.max(raw, 60_000), MAX_TIMEOUT) : MAX_TIMEOUT;
     return { kind: "timeout", durationMs };
   }
   return { kind: "warn" };

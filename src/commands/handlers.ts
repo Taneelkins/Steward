@@ -339,11 +339,6 @@ async function submitTypedLog(interaction: ChatInputCommandInteraction, db: AppD
   const rawResult = interaction.options.getString("appeal_result")?.toLowerCase();
   const appealResult = rawResult === "accepted" || rawResult === "denied" ? rawResult : null;
   const punishmentLength = interaction.options.getString("punishment_length");
-  const displayLower = ((actionDisplayName ?? actionName) ?? "").toLowerCase();
-  const needsDuration = displayLower.includes("timeout") || displayLower.includes("mute");
-  if (needsDuration && (!punishmentLength || !parsePunishmentLength(punishmentLength))) {
-    throw new Error("Duration is required for timeout/mute actions. Use `punishment_length` (e.g. `7h`, `30m`, `1 day`).");
-  }
   const record = await createCase(db, {
     guild,
     targetInfo: readCaseTarget(interaction),
