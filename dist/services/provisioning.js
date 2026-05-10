@@ -15,11 +15,13 @@ export const setupChannelSpecs = [
     { key: "logRestore", name: "logrestore", topic: "Restore moderation logs." },
     { key: "logDiscord", name: "log-discord", topic: "Discord-ban moderation logs." },
     { key: "logTicket", name: "logticket", topic: "Ticket moderation logs and ticket alerts." },
+    { key: "logAppeal", name: "logappeal", topic: "Appeal case logs." },
     { key: "quota", name: "quota-alerts", topic: "Quota status, warnings, and reports." },
     { key: "auditLog", name: "audit-log", topic: "Bot audit events." },
     { key: "modAlerts", name: "mod-alerts", topic: "Administrative alerts, review flags, and quota-end pings." },
     { key: "staffRegistration", name: "staff-registration", topic: "Staff registration notices." },
-    { key: "ticketTranscripts", name: "ticket-transcripts", topic: "Ticket Tool transcript watcher channel." }
+    { key: "ticketTranscripts", name: "ticket-transcripts", topic: "Ticket Tool transcript watcher channel." },
+    { key: "evidenceArchive", name: "evidence-archive", topic: "Protected archived evidence re-uploaded by the moderation ledger bot." }
 ];
 export async function provisionModerationServer(guild, options = {}) {
     await guild.roles.fetch();

@@ -1,18 +1,21 @@
 import { EmbedBuilder } from "discord.js";
 import { formatMultiplier, formatPoints, truncate } from "../utils/format.js";
 import { caseLinkComponents, postToConfiguredChannel, transcriptFieldValue, userLabel } from "../utils/discord.js";
+import { colors } from "../utils/theme.js";
 import { nowIso, parseDateInput } from "../utils/time.js";
 import { writeAudit, writeAuditAndPost } from "./audit.js";
 const FAST_POINTS_WINDOW_MINUTES = 15;
 const FAST_POINTS_THRESHOLD_MILLI = 10000;
 export function buildCaseLogEmbed(record, options = {}) {
     const showPoints = options.showPoints ?? true;
+    const appealStatus = record.appealResult === "accepted" ? "Appeal Approved" : record.appealResult === "denied" ? "Appeal Denied" : null;
     const information = [
         `Reason: ${record.reason}`,
         `Evidence: ${record.evidence ?? "None"}`,
         `Notes: ${record.notes ?? "None"}`,
         `Strikes: ${record.strikes}`,
         `Case ID: ${record.id}`,
+        record.punishmentLength ? `Punishment Length: ${record.punishmentLength}` : null,
         record.ticketId ? `Ticket ID: ${record.ticketId}` : null,
         record.transcriptUrl ? `Transcript: ${transcriptFieldValue(record.transcriptUrl)}` : null,
         record.mediaLinks.length > 0 ? `Media: ${record.mediaLinks.map((link) => link.label).join(", ")}` : null,
@@ -20,6 +23,7 @@ export function buildCaseLogEmbed(record, options = {}) {
     ].filter(Boolean);
     const fields = [
         { name: "Target", value: truncate(formatCaseTarget(record), 1000), inline: false },
+        ...(appealStatus ? [{ name: "Status", value: appealStatus, inline: true }] : []),
         { name: "Information", value: truncate(information.join("\n"), 1000), inline: false },
         ...(showPoints
             ? [
@@ -30,14 +34,43 @@ export function buildCaseLogEmbed(record, options = {}) {
         { name: "Moderator", value: `<@${record.moderatorUserId}>\n${truncate(record.moderatorUsername, 120)}`, inline: false }
     ];
     return new EmbedBuilder()
-        .setTitle(`LOGGED ${formatLoggedActionName(record.actionDisplayName ?? record.actionName)}`)
-        .setColor(record.isNoAction ? 0x95a5a6 : 0x2ecc71)
+        .setTitle(caseEmbedTitle(record))
+        .setColor(caseEmbedColor(record))
         .addFields(fields)
         .setFooter({ text: `Case #${record.id}` })
         .setTimestamp(new Date(record.createdAt));
 }
 export function formatLoggedActionName(value) {
     return cleanActionDisplayName(value).toUpperCase();
+}
+function caseEmbedTitle(record) {
+    if (record.actionName === "appeal") {
+        return `${cleanActionDisplayName(record.appealType ?? record.actionDisplayName ?? "Appeal")} Appeal`;
+    }
+    return `LOGGED ${formatLoggedActionName(record.actionDisplayName ?? record.actionName)}`;
+}
+function caseEmbedColor(record) {
+    if (record.actionName === "appeal") {
+        return record.appealResult === "accepted" ? colors.appealApproved : colors.appealDenied;
+    }
+    const display = `${record.actionDisplayName ?? record.actionName}`.toLowerCase();
+    if (display.includes("discord warn"))
+        return colors.discordWarn;
+    if (display.includes("discord timeout"))
+        return colors.discordTimeout;
+    if (display.includes("discord mute"))
+        return colors.discordMute;
+    if (display.includes("discord ban"))
+        return colors.discordBan;
+    if (display.includes("ingame ban") || record.actionName === "ban")
+        return colors.ingameBan;
+    if (record.actionName === "strike")
+        return colors.discordWarn;
+    if (record.actionName === "restore")
+        return colors.darkEmerald;
+    if (record.actionName === "ticket")
+        return colors.mutedBlue;
+    return record.isNoAction ? colors.charcoal : colors.neutral;
 }
 function cleanActionDisplayName(value) {
     const clean = value
@@ -151,25 +184,29 @@ export async function createCase(db, input) {
     const record = db.getCase(guildId, id);
     if (!record)
         throw new Error("Case was created but could not be loaded.");
-    const juniorBanReview = getJuniorBanReview(db, input.moderator, actionName);
+    const juniorEscalation = getJuniorEscalation(db, input.moderator, actionName);
     const embed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
-    if (juniorBanReview) {
+    if (juniorEscalation) {
         embed.addFields({
-            name: "Senior Moderator Review Required",
+            name: juniorEscalation.isBan ? "Senior Moderator Review Required" : "Staff Review Required",
             value: [
-                "This ban was logged by a Junior Moderator.",
-                `${juniorBanReview.seniorRoleMention} needs to review this log.`,
-                `${juniorBanReview.seniorRoleMention} needs to complete the actual ban.`
+                juniorEscalation.isBan
+                    ? "This ban was logged by a Junior Moderator."
+                    : "This log was submitted by a Junior Moderator.",
+                `${juniorEscalation.mentions} needs to review this log.`,
+                ...(juniorEscalation.isBan ? [`${juniorEscalation.mentions} needs to complete the actual ban.`] : [])
             ].join("\n"),
             inline: false
         });
     }
     const components = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
-    await postToConfiguredChannel(input.guild, db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId, {
-        ...(juniorBanReview ? { content: `${juniorBanReview.seniorRoleMention} Junior Moderator ban log needs review and completion.` } : {}),
+    const appealChannel = actionName === "appeal" ? config.appealLogChannelId : null;
+    const logChannel = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
+    await postToConfiguredChannel(input.guild, logChannel, {
+        ...(juniorEscalation ? { content: `${juniorEscalation.mentions} Junior Moderator log needs review.` } : {}),
         embeds: [embed],
         ...(components.length > 0 ? { components } : {}),
-        ...(juniorBanReview ? { allowedMentions: { roles: [juniorBanReview.seniorRoleId] } } : {})
+        ...(juniorEscalation?.roleIds.length ? { allowedMentions: { roles: juniorEscalation.roleIds, users: juniorEscalation.userIds } } : {})
     });
     if (strikes > 0) {
         await maybePostStrikeAlert(db, input.guild, record);
@@ -267,10 +304,14 @@ export function getPointTotal(db, guildId, moderatorUserId, since) {
 export function getStrikeTotal(db, guildId, targetUserId) {
     return (db.get("SELECT COALESCE(SUM(amount), 0) AS total FROM strikes WHERE guild_id = ? AND target_user_id = ? AND active = 1", guildId, targetUserId)?.total ?? 0);
 }
-function getJuniorBanReview(db, member, actionName) {
-    if (actionName !== "ban")
+function getJuniorEscalation(db, member, actionName) {
+    const isBan = actionName === "ban";
+    const isTicket = actionName === "ticket";
+    const isOther = actionName === "other";
+    if (!isBan && !isTicket && !isOther)
         return null;
     const roles = db.listStaffRoles(member.guild.id);
+    const config = db.getGuildConfig(member.guild.id);
     const hasRoleKey = (key) => roles.some((role) => role.key === key && member.roles.cache.has(role.roleId));
     const juniorOnly = hasRoleKey("juniorMod") &&
         !hasRoleKey("mod") &&
@@ -279,13 +320,33 @@ function getJuniorBanReview(db, member, actionName) {
         !hasRoleKey("communityManager");
     if (!juniorOnly)
         return null;
-    const seniorRole = roles.find((role) => role.key === "seniorMod");
-    if (!seniorRole)
+    let roleIds = [];
+    let userIds = [];
+    if (isOther) {
+        roleIds = config.juniorOtherEscalationRoleIds;
+        userIds = config.juniorOtherEscalationUserIds;
+    }
+    else {
+        // ban and ticket: use juniorEscalationRoleIds, falling back to seniorMod + mod
+        if (config.juniorEscalationRoleIds.length > 0 || config.juniorEscalationUserIds.length > 0) {
+            roleIds = config.juniorEscalationRoleIds;
+            userIds = config.juniorEscalationUserIds;
+        }
+        else {
+            const defaultRoles = [
+                roles.find((r) => r.key === "seniorMod")?.roleId,
+                ...(isTicket ? [roles.find((r) => r.key === "mod")?.roleId] : [])
+            ].filter((id) => Boolean(id));
+            roleIds = defaultRoles;
+        }
+    }
+    if (roleIds.length === 0 && userIds.length === 0)
         return null;
-    return {
-        seniorRoleId: seniorRole.roleId,
-        seniorRoleMention: `<@&${seniorRole.roleId}>`
-    };
+    const mentions = [
+        ...roleIds.map((id) => `<@&${id}>`),
+        ...userIds.map((id) => `<@${id}>`)
+    ].join(" ");
+    return { roleIds, userIds, mentions, isBan };
 }
 async function maybePostFastPointsAlert(db, guild, record) {
     const since = new Date(Date.now() - FAST_POINTS_WINDOW_MINUTES * 60 * 1000).toISOString();

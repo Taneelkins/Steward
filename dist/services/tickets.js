@@ -1,4 +1,4 @@
-import { EmbedBuilder } from "discord.js";
+import { ChannelType, EmbedBuilder } from "discord.js";
 import { formatPoints } from "../utils/format.js";
 import { postToConfiguredChannel, safeDm, ticketActionButtons, transcriptFieldValue, transcriptLinkComponents } from "../utils/discord.js";
 import { addHours, discordTimestamp, nowIso } from "../utils/time.js";
@@ -29,11 +29,13 @@ export function parseTicketToolMessage(message) {
         /(?:reason)[:\s-]+([^\n|]{2,80})/i
     ])?.trim() ?? "other";
     const transcriptUrl = message.attachments.first()?.url ?? firstMatch(source, [/https?:\/\/\S+/i]) ?? message.url;
+    const closedChannelId = findChannelNearLabel(source, ["channel", "ticket channel", "closed channel", "closed in"]) ?? null;
     return {
         ticketId,
         ticketType: normalizeTicketType(ticketType),
         openerUserId,
-        transcriptUrl
+        transcriptUrl,
+        closedChannelId
     };
 }
 export async function handlePotentialTranscript(db, message) {
@@ -51,8 +53,8 @@ export async function handlePotentialTranscript(db, message) {
     db.transaction(() => {
         const result = db.run(`INSERT OR IGNORE INTO pending_ticket_logs (
         guild_id, transcript_message_id, transcript_channel_id, ticket_id, ticket_type,
-        opener_user_id, transcript_url, status, created_at, due_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, guild.id, message.id, message.channelId, parsed.ticketId, parsed.ticketType, parsed.openerUserId, parsed.transcriptUrl, "pending", nowIso(), dueAt);
+        opener_user_id, closed_channel_id, transcript_url, status, created_at, due_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, guild.id, message.id, message.channelId, parsed.ticketId, parsed.ticketType, parsed.openerUserId, parsed.closedChannelId, parsed.transcriptUrl, "pending", nowIso(), dueAt);
         pendingId = Number(result.lastInsertRowid);
         db.updateGuildConfig(guild.id, { last_transcript_message_id: message.id });
     });
@@ -61,6 +63,14 @@ export async function handlePotentialTranscript(db, message) {
     const pending = db.getPendingTicket(guild.id, pendingId);
     if (!pending)
         return;
+    // Post prompt in the closed ticket channel if it still exists; otherwise post to ticket alert.
+    if (pending.closedChannelId) {
+        const closedChannel = await guild.channels.fetch(pending.closedChannelId).catch(() => null);
+        if (closedChannel && closedChannel.type === ChannelType.GuildText) {
+            await sendTicketLogPromptToChannel(db, pending, closedChannel);
+            return;
+        }
+    }
     await announcePendingTicket(db, guild, pending);
 }
 export async function announcePendingTicket(db, guild, pending) {
@@ -72,6 +82,15 @@ export async function announcePendingTicket(db, guild, pending) {
         components: [ticketActionButtons(pending.id, pending.transcriptUrl)],
         allowedMentions: { parse: [] }
     });
+}
+export async function sendTicketLogPromptToChannel(db, pending, channel) {
+    const embed = buildPendingTicketEmbed(pending);
+    await channel.send({
+        content: "This ticket has been closed. Use the buttons below to log it or dismiss it.",
+        embeds: [embed],
+        components: [ticketActionButtons(pending.id, pending.transcriptUrl)],
+        allowedMentions: { parse: [] }
+    }).catch(() => null);
 }
 export function buildPendingTicketEmbed(pending) {
     return new EmbedBuilder()
@@ -91,12 +110,28 @@ export async function processOverdueTickets(db, guild) {
         const config = db.getGuildConfig(guild.id);
         const embed = buildPendingTicketEmbed({ ...pending, status: "overdue" });
         embed.setTitle("Ticket Log Overdue").setColor(0xe74c3c);
-        await postToConfiguredChannel(guild, config.ticketAlertChannelId ?? config.alertChannelId, {
-            content: "A ticket transcript was not logged within 12 hours and may need admin review.",
-            embeds: [embed],
-            components: transcriptLinkComponents(pending.transcriptUrl),
-            allowedMentions: { parse: [] }
-        });
+        // Try the closed ticket channel first; fall back to ticket alert if it's gone.
+        let postedInClosedChannel = false;
+        if (pending.closedChannelId) {
+            const closedChannel = await guild.channels.fetch(pending.closedChannelId).catch(() => null);
+            if (closedChannel && closedChannel.type === ChannelType.GuildText) {
+                await closedChannel.send({
+                    content: "This ticket log is overdue and was not logged within 12 hours.",
+                    embeds: [embed],
+                    components: [ticketActionButtons(pending.id, pending.transcriptUrl)],
+                    allowedMentions: { parse: [] }
+                }).catch(() => null);
+                postedInClosedChannel = true;
+            }
+        }
+        if (!postedInClosedChannel) {
+            await postToConfiguredChannel(guild, config.ticketAlertChannelId ?? config.alertChannelId, {
+                content: "A ticket transcript was not logged within 12 hours and may need admin review.",
+                embeds: [embed],
+                components: transcriptLinkComponents(pending.transcriptUrl),
+                allowedMentions: { parse: [] }
+            });
+        }
         if (config.ownerUserId) {
             const owner = await guild.client.users.fetch(config.ownerUserId).catch(() => null);
             if (owner)
@@ -202,6 +237,19 @@ function findUserNearLabel(source, labels) {
         const lower = line.toLowerCase();
         if (labels.some((label) => lower.includes(label))) {
             const match = /<@!?(\d+)>/.exec(`${line}\n${lines[index + 1] ?? ""}`);
+            if (match)
+                return match[1];
+        }
+    }
+    return null;
+}
+function findChannelNearLabel(source, labels) {
+    const lines = source.split(/\n+/);
+    for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index] ?? "";
+        const lower = line.toLowerCase();
+        if (labels.some((label) => lower.includes(label))) {
+            const match = /<#(\d{15,25})>/.exec(`${line}\n${lines[index + 1] ?? ""}`);
             if (match)
                 return match[1];
         }

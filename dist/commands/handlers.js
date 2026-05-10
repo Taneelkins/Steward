@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { AttachmentBuilder, ChannelType, EmbedBuilder } from "discord.js";
 import { formatMultiplier, formatPoints, listOrNone, pointsToMilli, truncate } from "../utils/format.js";
 import { canUseAccess, caseLinkComponents, commandDeniedMessage, configSummaryEmbed, hasCanRegisterRole, postToConfiguredChannel, requireAdmin, requireMod } from "../utils/discord.js";
@@ -109,6 +110,9 @@ export async function handleChatInputCommand(interaction, context) {
                 break;
             case "backup":
                 await handleBackup(interaction, context, member);
+                break;
+            case "updatebot":
+                await handleUpdateBot(interaction, member);
                 break;
             case "export":
                 await handleExport(interaction, context, member);
@@ -303,10 +307,14 @@ async function handleConfig(interaction, { db }, member) {
         for (const update of roleUpdates.staffRoles) {
             upsertStaffRole(db, guild.id, update.key, update.role);
         }
+        const juniorEscalationRole = interaction.options.getRole("junior_escalation_role");
+        const juniorOtherEscalationRole = interaction.options.getRole("junior_other_escalation_role");
         db.updateGuildConfig(guild.id, {
             registration_role_id: roleUpdates.canRegisterRole?.id,
             mod_role_id: roleUpdates.legacyModRole?.id,
-            admin_role_id: roleUpdates.legacyAdminRole?.id
+            admin_role_id: roleUpdates.legacyAdminRole?.id,
+            junior_escalation_role_ids_json: juniorEscalationRole ? JSON.stringify([juniorEscalationRole.id]) : undefined,
+            junior_other_escalation_role_ids_json: juniorOtherEscalationRole ? JSON.stringify([juniorOtherEscalationRole.id]) : undefined
         });
         await writeAuditAndPost(db, guild, interaction.user.id, "config.roles.updated", {
             staffRoles: roleUpdates.staffRoles.map((update) => ({ key: update.key, roleId: update.role.id })),
@@ -339,6 +347,7 @@ async function handleConfig(interaction, { db }, member) {
         staff_registration_channel_id: getTextChannelOption(interaction, "staff_registration")?.id,
         ticket_transcript_channel_id: getTextChannelOption(interaction, "ticket_transcripts")?.id,
         ticket_alert_channel_id: getTextChannelOption(interaction, "ticket_alerts")?.id ?? actionLogUpdates.find((update) => update.actionName === "ticket")?.channel.id,
+        appeal_log_channel_id: getTextChannelOption(interaction, "logappeal")?.id ?? actionLogUpdates.find((update) => update.actionName === "appeal")?.channel.id,
         owner_user_id: interaction.options.getUser("owner")?.id,
         ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined
     };
@@ -870,7 +879,8 @@ function readConfigActionLogChannelUpdates(interaction) {
         { option: "logrestore", actionName: "restore" },
         { option: "logdiscord", actionName: "discord" },
         { option: "logdiscord", actionName: "discord-ban" },
-        { option: "logticket", actionName: "ticket" }
+        { option: "logticket", actionName: "ticket" },
+        { option: "logappeal", actionName: "appeal" }
     ];
     return mappings
         .map(({ option, actionName }) => ({ actionName, channel: getTextChannelOption(interaction, option) }))
@@ -907,7 +917,8 @@ function readSetupChannelOverrides(interaction) {
         logStrike: getTextChannelOption(interaction, "logstrike_channel"),
         logRestore: getTextChannelOption(interaction, "logrestore_channel"),
         logDiscord: getTextChannelOption(interaction, "logdiscord_channel"),
-        logTicket: getTextChannelOption(interaction, "logticket_channel")
+        logTicket: getTextChannelOption(interaction, "logticket_channel"),
+        logAppeal: getTextChannelOption(interaction, "logappeal_channel")
     };
 }
 function getTextChannelOption(interaction, name) {
@@ -946,7 +957,8 @@ function saveProvisionedConfig(db, guildId, provisioned, ownerUserId) {
         audit_channel_id: provisioned.channels.auditLog.id,
         ticket_transcript_channel_id: provisioned.channels.ticketTranscripts.id,
         ticket_alert_channel_id: provisioned.channels.logTicket.id,
-        alert_channel_id: provisioned.channels.modAlerts.id
+        alert_channel_id: provisioned.channels.modAlerts.id,
+        appeal_log_channel_id: provisioned.channels.logAppeal.id
     });
     db.replaceStaffRoles(guildId, staffRoleSpecs.map((spec) => ({
         key: spec.key,
@@ -961,7 +973,8 @@ function saveProvisionedConfig(db, guildId, provisioned, ownerUserId) {
         { actionName: "restore", channelId: provisioned.channels.logRestore.id },
         { actionName: "discord-ban", channelId: provisioned.channels.logDiscord.id },
         { actionName: "discord", channelId: provisioned.channels.logDiscord.id },
-        { actionName: "ticket", channelId: provisioned.channels.logTicket.id }
+        { actionName: "ticket", channelId: provisioned.channels.logTicket.id },
+        { actionName: "appeal", channelId: provisioned.channels.logAppeal.id }
     ]);
 }
 function savedRoleIdsFromDb(db, guildId) {
@@ -982,6 +995,7 @@ function savedChannelIdsFromConfig(db, guildId) {
         logRestore: db.getActionLogChannelId(guildId, "restore"),
         logDiscord: db.getActionLogChannelId(guildId, "discord") ?? db.getActionLogChannelId(guildId, "discord-ban"),
         logTicket: db.getActionLogChannelId(guildId, "ticket") ?? config.ticketAlertChannelId,
+        logAppeal: config.appealLogChannelId,
         quota: config.quotaChannelId,
         auditLog: config.auditChannelId,
         modAlerts: config.alertChannelId,
@@ -1022,6 +1036,33 @@ function normalizeActionName(value) {
         .replace(/[^a-z0-9_-]/g, "")
         .replace(/-+/g, "-")
         .slice(0, 50);
+}
+async function handleUpdateBot(interaction, member) {
+    requireServerOwner(member);
+    await interaction.deferReply({ ephemeral: true });
+    let pullOutput = "";
+    try {
+        await interaction.editReply("Pulling latest code from GitHub...");
+        pullOutput = execSync("git pull", { encoding: "utf8", cwd: process.cwd() });
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        await interaction.editReply(`Git pull failed:\n\`\`\`\n${msg.slice(0, 1800)}\n\`\`\``);
+        return;
+    }
+    let buildOutput = "";
+    try {
+        await interaction.editReply(`Pulled.\n\`\`\`\n${pullOutput.trim().slice(0, 800)}\n\`\`\`\nBuilding...`);
+        buildOutput = execSync("npm run build", { encoding: "utf8", cwd: process.cwd() });
+    }
+    catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        await interaction.editReply(`Build failed:\n\`\`\`\n${msg.slice(0, 1800)}\n\`\`\``);
+        return;
+    }
+    const summary = [pullOutput.trim(), buildOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);
+    await interaction.editReply(`Update complete. Restarting bot...\n\`\`\`\n${summary}\n\`\`\``);
+    setTimeout(() => process.exit(75), 1500);
 }
 async function replyError(interaction, error) {
     const message = error instanceof Error ? error.message : "Something went wrong.";

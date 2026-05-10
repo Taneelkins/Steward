@@ -330,25 +330,29 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
   const record = db.getCase(guildId, id);
   if (!record) throw new Error("Case was created but could not be loaded.");
 
-  const juniorBanReview = getJuniorBanReview(db, input.moderator, actionName);
+  const juniorEscalation = getJuniorEscalation(db, input.moderator, actionName);
   const embed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
-  if (juniorBanReview) {
+  if (juniorEscalation) {
     embed.addFields({
-      name: "Senior Moderator Review Required",
+      name: juniorEscalation.isBan ? "Senior Moderator Review Required" : "Staff Review Required",
       value: [
-        "This ban was logged by a Junior Moderator.",
-        `${juniorBanReview.seniorRoleMention} needs to review this log.`,
-        `${juniorBanReview.seniorRoleMention} needs to complete the actual ban.`
+        juniorEscalation.isBan
+          ? "This ban was logged by a Junior Moderator."
+          : "This log was submitted by a Junior Moderator.",
+        `${juniorEscalation.mentions} needs to review this log.`,
+        ...(juniorEscalation.isBan ? [`${juniorEscalation.mentions} needs to complete the actual ban.`] : [])
       ].join("\n"),
       inline: false
     });
   }
   const components = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
-  await postToConfiguredChannel(input.guild, db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId, {
-    ...(juniorBanReview ? { content: `${juniorBanReview.seniorRoleMention} Junior Moderator ban log needs review and completion.` } : {}),
+  const appealChannel = actionName === "appeal" ? config.appealLogChannelId : null;
+  const logChannel = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
+  await postToConfiguredChannel(input.guild, logChannel, {
+    ...(juniorEscalation ? { content: `${juniorEscalation.mentions} Junior Moderator log needs review.` } : {}),
     embeds: [embed],
     ...(components.length > 0 ? { components } : {}),
-    ...(juniorBanReview ? { allowedMentions: { roles: [juniorBanReview.seniorRoleId] } } : {})
+    ...(juniorEscalation?.roleIds.length ? { allowedMentions: { roles: juniorEscalation.roleIds, users: juniorEscalation.userIds } } : {})
   });
   if (strikes > 0) {
     await maybePostStrikeAlert(db, input.guild, record);
@@ -513,9 +517,14 @@ export function getStrikeTotal(db: AppDatabase, guildId: string, targetUserId: s
   );
 }
 
-function getJuniorBanReview(db: AppDatabase, member: GuildMember, actionName: string) {
-  if (actionName !== "ban") return null;
+function getJuniorEscalation(db: AppDatabase, member: GuildMember, actionName: string) {
+  const isBan = actionName === "ban";
+  const isTicket = actionName === "ticket";
+  const isOther = actionName === "other";
+  if (!isBan && !isTicket && !isOther) return null;
+
   const roles = db.listStaffRoles(member.guild.id);
+  const config = db.getGuildConfig(member.guild.id);
   const hasRoleKey = (key: string) =>
     roles.some((role) => role.key === key && member.roles.cache.has(role.roleId));
   const juniorOnly =
@@ -525,12 +534,34 @@ function getJuniorBanReview(db: AppDatabase, member: GuildMember, actionName: st
     !hasRoleKey("headMod") &&
     !hasRoleKey("communityManager");
   if (!juniorOnly) return null;
-  const seniorRole = roles.find((role) => role.key === "seniorMod");
-  if (!seniorRole) return null;
-  return {
-    seniorRoleId: seniorRole.roleId,
-    seniorRoleMention: `<@&${seniorRole.roleId}>`
-  };
+
+  let roleIds: string[] = [];
+  let userIds: string[] = [];
+
+  if (isOther) {
+    roleIds = config.juniorOtherEscalationRoleIds;
+    userIds = config.juniorOtherEscalationUserIds;
+  } else {
+    // ban and ticket: use juniorEscalationRoleIds, falling back to seniorMod + mod
+    if (config.juniorEscalationRoleIds.length > 0 || config.juniorEscalationUserIds.length > 0) {
+      roleIds = config.juniorEscalationRoleIds;
+      userIds = config.juniorEscalationUserIds;
+    } else {
+      const defaultRoles = [
+        roles.find((r) => r.key === "seniorMod")?.roleId,
+        ...(isTicket ? [roles.find((r) => r.key === "mod")?.roleId] : [])
+      ].filter((id): id is string => Boolean(id));
+      roleIds = defaultRoles;
+    }
+  }
+
+  if (roleIds.length === 0 && userIds.length === 0) return null;
+  const mentions = [
+    ...roleIds.map((id) => `<@&${id}>`),
+    ...userIds.map((id) => `<@${id}>`)
+  ].join(" ");
+
+  return { roleIds, userIds, mentions, isBan };
 }
 
 async function maybePostFastPointsAlert(db: AppDatabase, guild: Guild, record: ModerationCase) {

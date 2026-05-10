@@ -31,6 +31,7 @@ export const commandAccess = {
     audit: "head",
     setup: "owner",
     update: "owner",
+    updatebot: "owner",
     modshop: "community",
     config: "community",
     backup: "community",

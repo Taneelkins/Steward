@@ -16,6 +16,7 @@ import type { AppDatabase } from "../db.js";
 import type { GuildConfig } from "../types.js";
 import { type CommandAccess, type StaffTier, tierAllows } from "../services/access.js";
 import { truncate } from "./format.js";
+import { colors } from "./theme.js";
 
 export function userLabel(user: User | GuildMember) {
   const raw = "user" in user ? user.user : user;
@@ -171,12 +172,13 @@ export async function requireMod(db: AppDatabase, member: GuildMember) {
 export function configSummaryEmbed(config: GuildConfig) {
   return new EmbedBuilder()
     .setTitle("Bot Configuration")
-    .setColor(0x2f8f83)
+    .setColor(colors.voidPurple)
     .addFields(
       { name: "Mod Role", value: config.modRoleId ? `<@&${config.modRoleId}>` : "Not set", inline: true },
       { name: "Admin Role", value: config.adminRoleId ? `<@&${config.adminRoleId}>` : "Not set", inline: true },
       { name: "Owner DM", value: config.ownerUserId ? `<@${config.ownerUserId}>` : "Not set", inline: true },
       { name: "Action Logs", value: config.actionLogChannelId ? `<#${config.actionLogChannelId}>` : "Not set", inline: true },
+      { name: "Appeal Logs", value: config.appealLogChannelId ? `<#${config.appealLogChannelId}>` : "Not set", inline: true },
       { name: "Quota", value: config.quotaChannelId ? `<#${config.quotaChannelId}>` : "Not set", inline: true },
       { name: "Staff Registration", value: config.staffRegistrationChannelId ? `<#${config.staffRegistrationChannelId}>` : "Not set", inline: true },
       { name: "Can Register", value: config.registrationRoleId ? `<@&${config.registrationRoleId}>` : "Not set", inline: true },

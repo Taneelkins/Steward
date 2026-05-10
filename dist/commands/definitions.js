@@ -31,6 +31,7 @@ export function buildCommands(options = {}) {
             .addChannelOption((option) => textChannelOption(option, "logrestore_channel", "Existing restore log channel."))
             .addChannelOption((option) => textChannelOption(option, "logdiscord_channel", "Existing Discord log channel."))
             .addChannelOption((option) => textChannelOption(option, "logticket_channel", "Existing ticket log channel."))
+            .addChannelOption((option) => textChannelOption(option, "logappeal_channel", "Existing appeal log channel."))
             .addRoleOption((option) => option.setName("can_register_role").setDescription("Existing Can register role to use."))
             .setDefaultMemberPermissions(ownerDefault),
         new SlashCommandBuilder()
@@ -75,6 +76,10 @@ export function buildCommands(options = {}) {
             .setName("backup")
             .setDescription("Create a local database backup.")
             .setDefaultMemberPermissions(communityDefault),
+        new SlashCommandBuilder()
+            .setName("updatebot")
+            .setDescription("Pull the latest code from GitHub and restart the bot.")
+            .setDefaultMemberPermissions(ownerDefault),
         exportCommand(pointsEnabled)
     ];
     return commands.map((command) => command.toJSON());
@@ -94,7 +99,9 @@ function configCommand() {
         .addRoleOption((option) => option.setName("normal_mod_role").setDescription("Normal Mod permission role."))
         .addRoleOption((option) => option.setName("junior_mod_role").setDescription("Junior Mod permission role."))
         .addRoleOption((option) => option.setName("mod_role").setDescription("Legacy mod role field. Prefer staff tier roles."))
-        .addRoleOption((option) => option.setName("admin_role").setDescription("Legacy admin role field. Prefer Head Mod/Community Manager.")))
+        .addRoleOption((option) => option.setName("admin_role").setDescription("Legacy admin role field. Prefer Head Mod/Community Manager."))
+        .addRoleOption((option) => option.setName("junior_escalation_role").setDescription("Role to ping when a Junior Mod logs a non-Other ticket."))
+        .addRoleOption((option) => option.setName("junior_other_escalation_role").setDescription("Role to ping when a Junior Mod logs an Other ticket (default: none).")))
         .addSubcommand((sub) => sub
         .setName("channels")
         .setDescription("Set general, alert, ticket, and per-action log channels.")
@@ -111,6 +118,7 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "logrestore", "Restore log channel."))
         .addChannelOption((option) => textChannelOption(option, "logdiscord", "Discord log channel."))
         .addChannelOption((option) => textChannelOption(option, "logticket", "Ticket log channel."))
+        .addChannelOption((option) => textChannelOption(option, "logappeal", "Appeal log channel."))
         .addUserOption((option) => option.setName("owner").setDescription("Owner/admin DM target."))
         .addStringOption((option) => option.setName("ticket_tool_bot_id").setDescription("Ticket Tool bot user ID.")))
         .addSubcommand((sub) => sub
@@ -338,7 +346,7 @@ function logCommand() {
         .addStringOption((option) => option
         .setName("action")
         .setDescription("Optional typed fallback action.")
-        .addChoices({ name: "ban", value: "ban" }, { name: "strike", value: "strike" }, { name: "restore", value: "restore" }, { name: "discord", value: "discord" }, { name: "ticket", value: "ticket" }, { name: "other", value: "other" }))
+        .addChoices({ name: "ingame", value: "ingame" }, { name: "strike", value: "strike" }, { name: "restore", value: "restore" }, { name: "discord", value: "discord" }, { name: "ticket", value: "ticket" }, { name: "other", value: "other" }, { name: "appeal", value: "appeal" }))
         .addStringOption((option) => option.setName("action_type").setDescription("Display action type for Discord/custom logs, like ban, warn, mute, timeout."))
         .addStringOption((option) => option.setName("roblox_user").setDescription("Roblox username."))
         .addUserOption((option) => option.setName("discord_user").setDescription("Discord user, if pingable/selectable."))

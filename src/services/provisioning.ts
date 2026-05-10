@@ -18,6 +18,7 @@ export type SetupChannelKey =
   | "logRestore"
   | "logDiscord"
   | "logTicket"
+  | "logAppeal"
   | "quota"
   | "auditLog"
   | "modAlerts"
@@ -65,6 +66,7 @@ export const setupChannelSpecs: SetupChannelSpec[] = [
   { key: "logRestore", name: "logrestore", topic: "Restore moderation logs." },
   { key: "logDiscord", name: "log-discord", topic: "Discord-ban moderation logs." },
   { key: "logTicket", name: "logticket", topic: "Ticket moderation logs and ticket alerts." },
+  { key: "logAppeal", name: "logappeal", topic: "Appeal case logs." },
   { key: "quota", name: "quota-alerts", topic: "Quota status, warnings, and reports." },
   { key: "auditLog", name: "audit-log", topic: "Bot audit events." },
   { key: "modAlerts", name: "mod-alerts", topic: "Administrative alerts, review flags, and quota-end pings." },

@@ -14,6 +14,7 @@ export type GuildConfig = {
   ownerUserId: string | null;
   ticketToolBotId: string | null;
   evidenceArchiveChannelId: string | null;
+  appealLogChannelId: string | null;
   juniorEscalationRoleIds: string[];
   juniorEscalationUserIds: string[];
   juniorOtherEscalationRoleIds: string[];

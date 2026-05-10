@@ -36,6 +36,7 @@ export const commandAccess: Record<string, CommandAccess> = {
   audit: "head",
   setup: "owner",
   update: "owner",
+  updatebot: "owner",
   modshop: "community",
   config: "community",
   backup: "community",

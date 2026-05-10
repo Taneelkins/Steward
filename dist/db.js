@@ -185,6 +185,7 @@ export class AppDatabase {
         owner_user_id TEXT,
         ticket_tool_bot_id TEXT,
         evidence_archive_channel_id TEXT,
+        appeal_log_channel_id TEXT,
         junior_escalation_role_ids_json TEXT,
         junior_escalation_user_ids_json TEXT,
         junior_other_escalation_role_ids_json TEXT,
@@ -425,6 +426,7 @@ export class AppDatabase {
         this.ensureColumn("guild_configs", "interactive_log_enabled", "INTEGER NOT NULL DEFAULT 1");
         this.ensureColumn("guild_configs", "points_enabled", "INTEGER NOT NULL DEFAULT 1");
         this.ensureColumn("guild_configs", "evidence_archive_channel_id", "TEXT");
+        this.ensureColumn("guild_configs", "appeal_log_channel_id", "TEXT");
         this.ensureColumn("guild_configs", "junior_escalation_role_ids_json", "TEXT");
         this.ensureColumn("guild_configs", "junior_escalation_user_ids_json", "TEXT");
         this.ensureColumn("guild_configs", "junior_other_escalation_role_ids_json", "TEXT");
@@ -470,6 +472,7 @@ function mapGuildConfig(row) {
         ownerUserId: row.owner_user_id,
         ticketToolBotId: row.ticket_tool_bot_id,
         evidenceArchiveChannelId: row.evidence_archive_channel_id,
+        appealLogChannelId: row.appeal_log_channel_id,
         juniorEscalationRoleIds: parseStringList(row.junior_escalation_role_ids_json),
         juniorEscalationUserIds: parseStringList(row.junior_escalation_user_ids_json),
         juniorOtherEscalationRoleIds: parseStringList(row.junior_other_escalation_role_ids_json),

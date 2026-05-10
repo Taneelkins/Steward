@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonInteraction,
   ButtonStyle,
@@ -9,24 +10,39 @@ import {
   GuildMember,
   ModalBuilder,
   ModalSubmitInteraction,
+  PermissionFlagsBits,
   TextInputBuilder,
   TextInputStyle
 } from "discord.js";
-import type { Attachment, Message } from "discord.js";
+import type { Attachment, Message, TextChannel } from "discord.js";
 import type { AppDatabase } from "../db.js";
 import { buildCaseLogEmbed, createCase, effectiveActionPoints, formatLoggedActionName, type CaseTarget } from "./cases.js";
 import type { CaseMediaLink } from "../types.js";
 import { formatPoints, truncate } from "../utils/format.js";
-import { caseLinkComponents } from "../utils/discord.js";
+import { caseLinkComponents, getTextChannel } from "../utils/discord.js";
+import { getStaffTier } from "../utils/discord.js";
+import { colors } from "../utils/theme.js";
+
+type LogStage =
+  | "select"
+  | "discord_type"
+  | "ingame_type"
+  | "appeal_type"
+  | "appeal_result"
+  | "confirm"
+  | "fields";
 
 type LogDraft = {
   id: string;
   guildId: string;
   userId: string;
   channelId: string | null;
-  stage: "select" | "confirm" | "fields";
+  stage: LogStage;
   actionName: string | null;
   actionDisplayName: string | null;
+  appealType: string | null;
+  appealResult: "accepted" | "denied" | null;
+  punishmentLength: string | null;
   targetInfo: CaseTarget;
   reason: string | null;
   evidence: string | null;
@@ -37,6 +53,7 @@ type LogDraft = {
   mediaLinks: CaseMediaLink[];
   mediaCaptureEnabled: boolean;
   happenedAt: string | null;
+  isHeadMod: boolean;
   createdAt: number;
   updatedAt: number;
   timeout: NodeJS.Timeout | null;
@@ -56,15 +73,35 @@ const SESSION_TTL_MS = 5 * 60 * 1000;
 const MAX_MEDIA_LINKS = 20;
 
 const logActions: LogActionButton[] = [
-  { id: "ban", label: "Ban", actionName: "ban", displayName: "Ban" },
+  { id: "ingame", label: "Ingame", actionName: "ban", displayName: "Ingame" },
   { id: "strike", label: "Strike", actionName: "strike", displayName: "Strike" },
   { id: "restore", label: "Restore", actionName: "restore", displayName: "Restore" },
   { id: "discord", label: "Discord", actionName: "discord", displayName: "Discord" },
   { id: "ticket", label: "Ticket", actionName: "ticket", displayName: "Ticket" },
-  { id: "other", label: "Other", actionName: "other", displayName: "Other" }
+  { id: "other", label: "Other", actionName: "other", displayName: "Other" },
+  { id: "appeal", label: "Appeal", actionName: "appeal", displayName: "Appeal" }
+];
+
+const discordSubTypes = [
+  { id: "warn", label: "Warn", displayName: "Discord Warn" },
+  { id: "timeout", label: "Timeout", displayName: "Discord Timeout" },
+  { id: "mute", label: "Mute", displayName: "Discord Mute" },
+  { id: "ban", label: "Ban", displayName: "Discord Ban" }
+];
+
+const appealTypes = [
+  { id: "ban", label: "Ban", displayValue: "Ban" },
+  { id: "timeout", label: "Timeout", displayValue: "Timeout" },
+  { id: "warn", label: "Warn", displayValue: "Warn" },
+  { id: "mute", label: "Mute", displayValue: "Mute" },
+  { id: "ingame-ban", label: "Ingame Ban", displayValue: "Ingame Ban" },
+  { id: "other", label: "Other", displayValue: "Other" }
 ];
 
 export function resolveLogAction(value: string | null | undefined) {
+  if (!value) return null;
+  // Allow "ban" or "ingame" to map to the ingame action
+  if (value === "ban" || value === "ingame") return logActions.find((a) => a.id === "ingame") ?? null;
   return logActions.find((action) => action.id === value || action.actionName === value) ?? null;
 }
 
@@ -79,7 +116,9 @@ export async function startInteractiveLog(interaction: ChatInputCommandInteracti
     return;
   }
 
-  const draft = createDraft(interaction.guild!.id, member.id, interaction.channelId);
+  const tier = getStaffTier(db, member);
+  const isHeadMod = tier === "head" || tier === "community" || member.permissions.has(PermissionFlagsBits.Administrator);
+  const draft = createDraft(interaction.guild!.id, member.id, interaction.channelId, isHeadMod);
   sessions.set(draft.id, draft);
   sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
   await interaction.reply({
@@ -116,10 +155,58 @@ export async function handleLogButton(db: AppDatabase, interaction: ButtonIntera
       return true;
     }
     draft.actionName = selected.actionName;
-    draft.actionDisplayName = selected.displayName;
-    draft.stage = "confirm";
+    draft.actionDisplayName = null;
+    draft.appealType = null;
+    draft.appealResult = null;
     draft.mediaCaptureEnabled = false;
+
+    if (value === "discord") {
+      draft.stage = "discord_type";
+    } else if (value === "ingame") {
+      draft.stage = "ingame_type";
+    } else if (value === "appeal") {
+      draft.stage = "appeal_type";
+    } else {
+      draft.actionDisplayName = selected.displayName;
+      draft.stage = "confirm";
+    }
     await interaction.update(previewPayload(db, draft));
+    return true;
+  }
+
+  if (action === "discord_type") {
+    const sub = discordSubTypes.find((t) => t.id === value);
+    if (!sub) return true;
+    draft.actionDisplayName = sub.displayName;
+    draft.stage = "confirm";
+    await interaction.update(previewPayload(db, draft));
+    return true;
+  }
+
+  if (action === "ingame_type") {
+    if (value === "ban") {
+      draft.actionDisplayName = "Ingame Ban";
+      draft.stage = "confirm";
+      await interaction.update(previewPayload(db, draft));
+    }
+    return true;
+  }
+
+  if (action === "appeal_type") {
+    const at = appealTypes.find((t) => t.id === value);
+    if (!at) return true;
+    draft.appealType = at.displayValue;
+    draft.stage = "appeal_result";
+    await interaction.update(previewPayload(db, draft));
+    return true;
+  }
+
+  if (action === "appeal_result") {
+    if (value === "accepted" || value === "denied") {
+      draft.appealResult = value;
+      draft.stage = "confirm";
+      await interaction.update(previewPayload(db, draft));
+    }
     return true;
   }
 
@@ -134,8 +221,18 @@ export async function handleLogButton(db: AppDatabase, interaction: ButtonIntera
   }
 
   if (action === "back") {
-    draft.stage = "select";
-    draft.mediaCaptureEnabled = false;
+    if (draft.stage === "appeal_result") {
+      draft.stage = "appeal_type";
+    } else if (draft.stage === "fields") {
+      draft.stage = "confirm";
+    } else {
+      draft.stage = "select";
+      draft.actionName = null;
+      draft.actionDisplayName = null;
+      draft.appealType = null;
+      draft.appealResult = null;
+      draft.mediaCaptureEnabled = false;
+    }
     await interaction.update(previewPayload(db, draft));
     return true;
   }
@@ -218,7 +315,7 @@ export async function handleLogMediaMessage(db: AppDatabase, message: Message) {
   return true;
 }
 
-function createDraft(guildId: string, userId: string, channelId: string | null): LogDraft {
+function createDraft(guildId: string, userId: string, channelId: string | null, isHeadMod: boolean): LogDraft {
   return {
     id: randomUUID().replace(/-/g, "").slice(0, 12),
     guildId,
@@ -227,6 +324,9 @@ function createDraft(guildId: string, userId: string, channelId: string | null):
     stage: "select",
     actionName: null,
     actionDisplayName: null,
+    appealType: null,
+    appealResult: null,
+    punishmentLength: null,
     targetInfo: {},
     reason: null,
     evidence: null,
@@ -237,6 +337,7 @@ function createDraft(guildId: string, userId: string, channelId: string | null):
     mediaLinks: [],
     mediaCaptureEnabled: false,
     happenedAt: null,
+    isHeadMod,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     timeout: null,
@@ -263,17 +364,31 @@ function getDraft(sessionId: string | undefined, interaction: ButtonInteraction 
   return draft;
 }
 
+function stageDescription(draft: LogDraft): string {
+  switch (draft.stage) {
+    case "select": return "Step 1: choose the type of moderation log to create.";
+    case "discord_type": return "Step 2: choose the Discord action type.";
+    case "ingame_type": return "Step 2: choose the Ingame action type.";
+    case "appeal_type": return "Step 2: choose what the appeal is for.";
+    case "appeal_result": return `Step 3: choose the appeal result for **${draft.appealType ?? "Appeal"}**.`;
+    case "confirm": {
+      const parts: string[] = [];
+      if (draft.appealType) parts.push(`Appeal Type: ${draft.appealType}`);
+      if (draft.appealResult) parts.push(`Result: ${draft.appealResult === "accepted" ? "Accepted" : "Denied"}`);
+      const extra = parts.length > 0 ? `\n${parts.join(" | ")}` : "";
+      return `Log type confirmed. Press Next to fill fields or Cancel to stop.${extra}`;
+    }
+    default: return "Step: fill the required fields, review the preview, then submit.";
+  }
+}
+
 function previewPayload(db: AppDatabase, draft: LogDraft) {
   const mediaLine = draft.stage === "fields"
     ? draft.mediaCaptureEnabled
       ? `Attach Media is on. Send image, video, or file evidence in this channel before Submit. Captured: ${draft.mediaLinks.length}/${MAX_MEDIA_LINKS}.`
       : "Use Attach Media to collect uploaded evidence as clickable message links."
     : null;
-  const description = draft.stage === "select"
-    ? "Step 1: choose the type of moderation log to create."
-    : draft.stage === "confirm"
-      ? "Step 2: confirm this log type, then continue or cancel."
-      : "Step 3: fill the required fields, review the preview, then submit.";
+
   const fields = draft.stage === "fields"
     ? [
         { name: "Action", value: draft.actionName ? formatActionLine(db, draft) : "Pick an action with the buttons below.", inline: false },
@@ -283,10 +398,23 @@ function previewPayload(db: AppDatabase, draft: LogDraft) {
     : [
         { name: "Action", value: draft.actionName ? formatActionLine(db, draft) : "No log type selected yet.", inline: false }
       ];
+
+  const embedTitle = (() => {
+    if (draft.stage === "appeal_result" || (draft.actionName === "appeal" && draft.appealType)) {
+      const resultLabel = draft.appealResult
+        ? draft.appealResult === "accepted" ? " — Approved" : " — Denied"
+        : "";
+      return `APPEAL PREVIEW: ${draft.appealType ?? "Appeal"}${resultLabel}`;
+    }
+    return draft.actionName
+      ? `LOG PREVIEW ${formatLoggedActionName(draft.actionDisplayName ?? draft.actionName)}`
+      : "Log Preview";
+  })();
+
   const embed = new EmbedBuilder()
-    .setTitle(draft.actionName ? `LOG PREVIEW ${formatLoggedActionName(draft.actionDisplayName ?? draft.actionName)}` : "Log Preview")
-    .setColor(0x5865f2)
-    .setDescription(description)
+    .setTitle(embedTitle)
+    .setColor(colors.voidPurple)
+    .setDescription(stageDescription(draft))
     .addFields(fields)
     .setFooter({ text: "Only one pending log can be active per user. Inactive drafts expire after 5 minutes." });
 
@@ -296,7 +424,9 @@ function previewPayload(db: AppDatabase, draft: LogDraft) {
         ? "Choose a log type to begin."
         : draft.stage === "confirm"
           ? "Log type selected. Press Next to fill the log fields, or Cancel to stop."
-          : "Build the log, review the preview, then press Submit.",
+          : draft.stage === "fields"
+            ? "Build the log, review the preview, then press Submit."
+            : "Select an option to continue.",
       mediaLine
     ].filter(Boolean).join("\n"),
     embeds: [embed],
@@ -305,47 +435,111 @@ function previewPayload(db: AppDatabase, draft: LogDraft) {
 }
 
 function draftComponents(draft: LogDraft, disabled = false, db?: AppDatabase) {
-  if (draft.stage === "select") return selectComponents(draft, disabled);
-  if (draft.stage === "confirm") return confirmComponents(draft, disabled);
+  switch (draft.stage) {
+    case "select": return selectComponents(draft, disabled);
+    case "discord_type": return discordTypeComponents(draft, disabled);
+    case "ingame_type": return ingameTypeComponents(draft, disabled);
+    case "appeal_type": return appealTypeComponents(draft, disabled);
+    case "appeal_result": return appealResultComponents(draft, disabled);
+    case "confirm": return confirmComponents(draft, disabled);
+    default: return fieldsComponents(draft, disabled, db);
+  }
+}
 
-  const targetComplete = hasTarget(draft.targetInfo);
-  const evidenceRequired = isEvidenceRequired(draft, db);
-  const evidenceComplete = hasEvidence(draft);
-  const actionTypeRequired = draft.actionName === "discord";
-  const actionTypeComplete = Boolean(draft.actionDisplayName && draft.actionDisplayName.toLowerCase() !== "discord");
+function selectComponents(draft: LogDraft, disabled = false) {
+  const visible = logActions.filter((action) => {
+    if (action.id === "strike") return draft.isHeadMod;
+    return true;
+  });
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let i = 0; i < visible.length; i += 5) {
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        ...visible.slice(i, i + 5).map((action) =>
+          new ButtonBuilder()
+            .setCustomId(`log:${draft.id}:action:${action.id}`)
+            .setLabel(action.label)
+            .setStyle(actionButtonStyle(action.id))
+            .setDisabled(disabled)
+        )
+      )
+    );
+  }
+  return rows;
+}
 
+function discordTypeComponents(draft: LogDraft, disabled = false) {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`log:${draft.id}:modal:target`).setLabel("Target").setStyle(requiredStyle(targetComplete)).setDisabled(disabled),
-      new ButtonBuilder().setCustomId(`log:${draft.id}:modal:evidence`).setLabel("Evidence").setStyle(requiredStyle(evidenceComplete, evidenceRequired)).setDisabled(disabled),
-      new ButtonBuilder().setCustomId(`log:${draft.id}:modal:info`).setLabel("Info").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId(`log:${draft.id}:modal:details`).setLabel("Details").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-      ...(actionTypeRequired
-        ? [new ButtonBuilder().setCustomId(`log:${draft.id}:modal:action`).setLabel("Action Type").setStyle(requiredStyle(actionTypeComplete, true)).setDisabled(disabled)]
-        : [])
+      ...discordSubTypes.map((sub) =>
+        new ButtonBuilder()
+          .setCustomId(`log:${draft.id}:discord_type:${sub.id}`)
+          .setLabel(sub.label)
+          .setStyle(discordSubTypeStyle(sub.id))
+          .setDisabled(disabled)
+      )
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`log:${draft.id}:media`).setLabel(draft.mediaCaptureEnabled ? "Attach Media On" : "Attach Media").setStyle(draft.mediaCaptureEnabled ? ButtonStyle.Success : ButtonStyle.Primary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId(`log:${draft.id}:submit`).setLabel("Submit").setStyle(ButtonStyle.Success).setDisabled(disabled),
       new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
       new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled)
     )
   ];
 }
 
-function selectComponents(draft: LogDraft, disabled = false) {
+function ingameTypeComponents(draft: LogDraft, disabled = false) {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      ...logActions.slice(0, 5).map((action) =>
+      new ButtonBuilder()
+        .setCustomId(`log:${draft.id}:ingame_type:ban`)
+        .setLabel("Ban")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(disabled)
+    ),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    )
+  ];
+}
+
+function appealTypeComponents(draft: LogDraft, disabled = false) {
+  const firstFive = appealTypes.slice(0, 5);
+  const lastOne = appealTypes[5];
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      ...firstFive.map((at) =>
         new ButtonBuilder()
-          .setCustomId(`log:${draft.id}:action:${action.id}`)
-          .setLabel(action.label)
-          .setStyle(actionButtonStyle(action.id))
+          .setCustomId(`log:${draft.id}:appeal_type:${at.id}`)
+          .setLabel(at.label)
+          .setStyle(ButtonStyle.Secondary)
           .setDisabled(disabled)
       )
     ),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`log:${draft.id}:action:other`).setLabel("Other").setStyle(actionButtonStyle("other")).setDisabled(disabled)
+      ...(lastOne
+        ? [new ButtonBuilder().setCustomId(`log:${draft.id}:appeal_type:${lastOne.id}`).setLabel(lastOne.label).setStyle(ButtonStyle.Secondary).setDisabled(disabled)]
+        : []),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    )
+  ];
+}
+
+function appealResultComponents(draft: LogDraft, disabled = false) {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`log:${draft.id}:appeal_result:accepted`)
+        .setLabel("Accepted")
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(disabled),
+      new ButtonBuilder()
+        .setCustomId(`log:${draft.id}:appeal_result:denied`)
+        .setLabel("Denied")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(disabled),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled)
     )
   ];
 }
@@ -354,6 +548,35 @@ function confirmComponents(draft: LogDraft, disabled = false) {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(`log:${draft.id}:next`).setLabel("Next").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    )
+  ];
+}
+
+function fieldsComponents(draft: LogDraft, disabled = false, db?: AppDatabase) {
+  const targetComplete = hasTarget(draft.targetInfo);
+  const evidenceRequired = isEvidenceRequired(draft, db);
+  const evidenceComplete = hasEvidence(draft);
+  const appealRequired = draft.actionName === "appeal";
+  const appealComplete = Boolean(draft.appealResult);
+
+  const row1Buttons = [
+    new ButtonBuilder().setCustomId(`log:${draft.id}:modal:target`).setLabel("Target").setStyle(requiredStyle(targetComplete)).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(`log:${draft.id}:modal:evidence`).setLabel("Evidence").setStyle(requiredStyle(evidenceComplete, evidenceRequired)).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(`log:${draft.id}:modal:info`).setLabel("Info").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId(`log:${draft.id}:modal:details`).setLabel("Details").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+    ...(appealRequired
+      ? [new ButtonBuilder().setCustomId(`log:${draft.id}:modal:appeal_info`).setLabel("Appeal Info").setStyle(requiredStyle(appealComplete, true)).setDisabled(disabled)]
+      : [])
+  ];
+
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(...row1Buttons),
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`log:${draft.id}:media`).setLabel(draft.mediaCaptureEnabled ? "Attach Media On" : "Attach Media").setStyle(draft.mediaCaptureEnabled ? ButtonStyle.Success : ButtonStyle.Primary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:submit`).setLabel("Submit").setStyle(ButtonStyle.Success).setDisabled(disabled),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
       new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled)
     )
   ];
@@ -379,20 +602,27 @@ function buildModal(draft: LogDraft, modalType: string) {
       .addComponents(
         textRow("ticket_id", "Ticket ID", draft.ticketId, false),
         textRow("transcript_link", "TranscriptLink", draft.transcriptUrl, false),
+        textRow("punishment_length", "Punishment Length", draft.punishmentLength, false),
         textRow("happened_at", "Happened At", draft.happenedAt, false),
         textRow("no_action", "No Action? yes/no", draft.noAction ? "yes" : "no", false)
       );
   }
 
-  if (modalType === "action") {
+  if (modalType === "appeal_info") {
     return new ModalBuilder()
-      .setCustomId(`log:${draft.id}:save:action`)
-      .setTitle("Action Type")
-      .addComponents(textRow("action_type", "Action Type", draft.actionDisplayName, true));
+      .setCustomId(`log:${draft.id}:save:appeal_info`)
+      .setTitle("Appeal Information")
+      .addComponents(
+        textRow("appeal_type", "Appeal Type (e.g. Ban, Timeout, Warn)", draft.appealType, false),
+        textRow("appeal_result", "Result: accepted or denied", draft.appealResult ?? "", false)
+      );
   }
 
   if (modalType === "evidence") {
-    return buildEvidenceModal(draft);
+    return new ModalBuilder()
+      .setCustomId(`log:${draft.id}:save:evidence`)
+      .setTitle("Log Evidence")
+      .addComponents(textRow("evidence", "Evidence", draft.evidence, false, TextInputStyle.Paragraph));
   }
 
   return new ModalBuilder()
@@ -430,14 +660,17 @@ function saveModalFields(draft: LogDraft, modalType: string, interaction: ModalS
   if (modalType === "details") {
     draft.ticketId = clean(interaction.fields.getTextInputValue("ticket_id"));
     draft.transcriptUrl = clean(interaction.fields.getTextInputValue("transcript_link"));
+    draft.punishmentLength = clean(interaction.fields.getTextInputValue("punishment_length"));
     draft.happenedAt = clean(interaction.fields.getTextInputValue("happened_at"));
     draft.noAction = /^(y(es)?|true|1)$/i.test(clean(interaction.fields.getTextInputValue("no_action")) ?? "");
     return;
   }
 
-  if (modalType === "action") {
-    draft.actionDisplayName = clean(interaction.fields.getTextInputValue("action_type"));
-    if (!draft.actionName) draft.actionName = "other";
+  if (modalType === "appeal_info") {
+    const rawType = clean(interaction.fields.getTextInputValue("appeal_type"));
+    const rawResult = clean(interaction.fields.getTextInputValue("appeal_result"))?.toLowerCase() ?? "";
+    if (rawType) draft.appealType = rawType;
+    if (rawResult === "accepted" || rawResult === "denied") draft.appealResult = rawResult;
     return;
   }
 
@@ -461,6 +694,12 @@ async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draf
     ?? (draft.mediaLinks.length > 0 ? `Media evidence: ${draft.mediaLinks.map((link) => link.label).join(", ")}` : null)
     ?? (draft.transcriptUrl ? "See transcript." : null);
 
+  // Archive media attachments to the evidence archive channel before creating the case
+  const config = db.getGuildConfig(draft.guildId);
+  const archivedLinks = config.evidenceArchiveChannelId && draft.mediaLinks.length > 0
+    ? await archiveMediaLinks(interaction.guild!, config.evidenceArchiveChannelId, draft.mediaLinks, interaction.user.id)
+    : draft.mediaLinks;
+
   const record = await createCase(db, {
     guild: interaction.guild!,
     targetInfo: draft.targetInfo,
@@ -473,7 +712,10 @@ async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draf
     noAction: draft.noAction,
     ticketId: draft.ticketId,
     transcriptUrl: draft.transcriptUrl,
-    mediaLinks: draft.mediaLinks,
+    mediaLinks: archivedLinks,
+    appealType: draft.appealType,
+    appealResult: draft.appealResult,
+    punishmentLength: draft.punishmentLength,
     happenedAt: draft.happenedAt
   });
 
@@ -484,6 +726,49 @@ async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draf
     embeds: [buildCaseLogEmbed(record, { showPoints: pointsEnabled })],
     components: caseLinkComponents(record.transcriptUrl, record.mediaLinks)
   });
+}
+
+async function archiveMediaLinks(
+  guild: Parameters<typeof getTextChannel>[0],
+  archiveChannelId: string,
+  links: CaseMediaLink[],
+  _moderatorId: string
+): Promise<CaseMediaLink[]> {
+  const archiveChannel = await getTextChannel(guild, archiveChannelId);
+  if (!archiveChannel) return links;
+
+  const archived: CaseMediaLink[] = [];
+  for (const link of links) {
+    if (!link.sourceUrl) {
+      archived.push(link);
+      continue;
+    }
+    try {
+      const response = await fetch(link.sourceUrl);
+      if (!response.ok) {
+        archived.push(link);
+        continue;
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const ext = extFromUrl(link.sourceUrl);
+      const attachment = new AttachmentBuilder(buffer, { name: `evidence${ext}` });
+      const msg = await (archiveChannel as TextChannel).send({ files: [attachment] });
+      archived.push({ label: link.label, kind: link.kind, url: msg.url, sourceUrl: link.sourceUrl });
+    } catch {
+      archived.push(link);
+    }
+  }
+  return archived;
+}
+
+function extFromUrl(url: string): string {
+  try {
+    const pathname = new URL(url).pathname;
+    const match = /(\.[a-z0-9]{2,5})$/i.exec(pathname);
+    return match?.[1] ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function formatActionLine(db: AppDatabase, draft: LogDraft) {
@@ -516,7 +801,10 @@ function formatDraftInformation(draft: LogDraft) {
     `No Action: ${draft.noAction ? "Yes" : "No"}`,
     draft.ticketId ? `Ticket ID: ${draft.ticketId}` : null,
     draft.transcriptUrl ? "Transcript: will show as a button" : null,
-    draft.happenedAt ? `Happened At: ${draft.happenedAt}` : null
+    draft.punishmentLength ? `Punishment Length: ${draft.punishmentLength}` : null,
+    draft.happenedAt ? `Happened At: ${draft.happenedAt}` : null,
+    draft.appealType ? `Appeal Type: ${draft.appealType}` : null,
+    draft.appealResult ? `Appeal Result: ${draft.appealResult === "accepted" ? "Accepted" : "Denied"}` : null
   ].filter(Boolean).join("\n");
 }
 
@@ -527,13 +815,6 @@ function clean(value: string | null | undefined) {
 
 function extractDiscordId(value: string | null | undefined) {
   return value?.match(/\d{15,25}/)?.[0] ?? null;
-}
-
-function buildEvidenceModal(draft: LogDraft) {
-  return new ModalBuilder()
-    .setCustomId(`log:${draft.id}:save:evidence`)
-    .setTitle("Log Evidence")
-    .addComponents(textRow("evidence", "Evidence", draft.evidence, false, TextInputStyle.Paragraph));
 }
 
 function hasTarget(target: CaseTarget) {
@@ -555,9 +836,15 @@ function requiredStyle(complete: boolean, required = true) {
 }
 
 function actionButtonStyle(actionId: string) {
-  if (actionId === "ban" || actionId === "strike") return ButtonStyle.Danger;
+  if (actionId === "ingame" || actionId === "strike") return ButtonStyle.Danger;
   if (actionId === "restore") return ButtonStyle.Success;
-  if (actionId === "discord" || actionId === "ticket") return ButtonStyle.Primary;
+  if (actionId === "discord" || actionId === "ticket" || actionId === "appeal") return ButtonStyle.Primary;
+  return ButtonStyle.Secondary;
+}
+
+function discordSubTypeStyle(id: string) {
+  if (id === "ban") return ButtonStyle.Danger;
+  if (id === "timeout" || id === "mute") return ButtonStyle.Primary;
   return ButtonStyle.Secondary;
 }
 
@@ -565,9 +852,7 @@ function missingRequiredFields(db: AppDatabase, draft: LogDraft) {
   const missing: string[] = [];
   if (!draft.actionName) missing.push("Action");
   if (!hasTarget(draft.targetInfo)) missing.push("Target");
-  if (draft.actionName === "discord" && (!draft.actionDisplayName || draft.actionDisplayName.toLowerCase() === "discord")) {
-    missing.push("Action Type");
-  }
+  if (draft.actionName === "appeal" && !draft.appealResult) missing.push("Appeal Result");
   const action = draft.actionName ? db.getAction(draft.guildId, draft.actionName) : null;
   if ((action?.evidenceRequired ?? isEvidenceRequired(draft, db)) && !hasEvidence(draft)) {
     missing.push("Evidence");
@@ -581,7 +866,8 @@ function addMediaLinks(draft: LogDraft, message: Message) {
     if (draft.mediaLinks.length >= MAX_MEDIA_LINKS) break;
     const kind = classifyAttachment(attachment);
     const label = nextMediaLabel(draft, kind);
-    draft.mediaLinks.push({ label, kind, url: message.url });
+    // Store the original attachment URL as sourceUrl for archiving later
+    draft.mediaLinks.push({ label, kind, url: message.url, sourceUrl: attachment.url });
     added += 1;
   }
   return added;
@@ -614,7 +900,7 @@ async function cancelDraft(draft: LogDraft, reason: string) {
   if (!draft.editReply) return;
   const embed = new EmbedBuilder()
     .setTitle("Log Cancelled")
-    .setColor(0x95a5a6)
+    .setColor(colors.charcoal)
     .setDescription(reason);
   await draft.editReply({
     content: reason,
