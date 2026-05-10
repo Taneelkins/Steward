@@ -334,13 +334,10 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
   const embed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
   if (juniorEscalation) {
     embed.addFields({
-      name: juniorEscalation.isBan ? "Senior Moderator Review Required" : "Staff Review Required",
+      name: "Staff Review Required",
       value: [
-        juniorEscalation.isBan
-          ? "This ban was logged by a Junior Moderator."
-          : "This log was submitted by a Junior Moderator.",
-        `${juniorEscalation.mentions} needs to review this log.`,
-        ...(juniorEscalation.isBan ? [`${juniorEscalation.mentions} needs to complete the actual ban.`] : [])
+        "This log was submitted by a Junior Moderator.",
+        `${juniorEscalation.mentions} needs to review this action.`
       ].join("\n"),
       inline: false
     });
@@ -518,10 +515,7 @@ export function getStrikeTotal(db: AppDatabase, guildId: string, targetUserId: s
 }
 
 function getJuniorEscalation(db: AppDatabase, member: GuildMember, actionName: string) {
-  const isBan = actionName === "ban";
-  const isTicket = actionName === "ticket";
-  const isOther = actionName === "other";
-  if (!isBan && !isTicket && !isOther) return null;
+  const isOther = actionName === "other" || actionName === "case-note";
 
   const roles = db.listStaffRoles(member.guild.id);
   const config = db.getGuildConfig(member.guild.id);
@@ -542,14 +536,14 @@ function getJuniorEscalation(db: AppDatabase, member: GuildMember, actionName: s
     roleIds = config.juniorOtherEscalationRoleIds;
     userIds = config.juniorOtherEscalationUserIds;
   } else {
-    // ban and ticket: use juniorEscalationRoleIds, falling back to seniorMod + mod
+    // all other actions: use juniorEscalationRoleIds, falling back to seniorMod + mod
     if (config.juniorEscalationRoleIds.length > 0 || config.juniorEscalationUserIds.length > 0) {
       roleIds = config.juniorEscalationRoleIds;
       userIds = config.juniorEscalationUserIds;
     } else {
       const defaultRoles = [
         roles.find((r) => r.key === "seniorMod")?.roleId,
-        ...(isTicket ? [roles.find((r) => r.key === "mod")?.roleId] : [])
+        roles.find((r) => r.key === "mod")?.roleId
       ].filter((id): id is string => Boolean(id));
       roleIds = defaultRoles;
     }
@@ -561,7 +555,7 @@ function getJuniorEscalation(db: AppDatabase, member: GuildMember, actionName: s
     ...userIds.map((id) => `<@${id}>`)
   ].join(" ");
 
-  return { roleIds, userIds, mentions, isBan };
+  return { roleIds, userIds, mentions };
 }
 
 async function maybePostFastPointsAlert(db: AppDatabase, guild: Guild, record: ModerationCase) {

@@ -347,7 +347,7 @@ function logCommand() {
         .setName("action")
         .setDescription("Optional typed fallback action.")
         .addChoices({ name: "ingame", value: "ingame" }, { name: "strike", value: "strike" }, { name: "restore", value: "restore" }, { name: "discord", value: "discord" }, { name: "ticket", value: "ticket" }, { name: "other", value: "other" }, { name: "appeal", value: "appeal" }))
-        .addStringOption((option) => option.setName("action_type").setDescription("Display action type for Discord/custom logs, like ban, warn, mute, timeout."))
+        .addStringOption((option) => option.setName("action_type").setDescription("Sub-type for Discord logs: warn, timeout, mute, or ban. Required when action is discord."))
         .addStringOption((option) => option.setName("roblox_user").setDescription("Roblox username."))
         .addUserOption((option) => option.setName("discord_user").setDescription("Discord user, if pingable/selectable."))
         .addStringOption((option) => option.setName("roblox_id").setDescription("Roblox user ID."))
@@ -358,7 +358,10 @@ function logCommand() {
         .addStringOption((option) => option.setName("notes").setDescription("Extra details."))
         .addBooleanOption((option) => option.setName("no_action").setDescription("Ticket required no moderation action."))
         .addStringOption((option) => option.setName("ticket_id").setDescription("Ticket ID, if available."))
-        .addStringOption((option) => option.setName("happened_at").setDescription("Optional ISO date/time for late-log flag."));
+        .addStringOption((option) => option.setName("happened_at").setDescription("Optional ISO date/time for late-log flag."))
+        .addStringOption((option) => option.setName("appeal_type").setDescription("Appeal type for appeal logs: ban-appeal, timeout-appeal, warn-appeal, mute-appeal, ingame-appeal."))
+        .addStringOption((option) => option.setName("appeal_result").setDescription("Result for appeal logs: accepted or denied."))
+        .addStringOption((option) => option.setName("punishment_length").setDescription("Punishment length for Discord logs, e.g. 7 days."));
 }
 function textChannelOption(option, name, description) {
     return option.setName(name).setDescription(description).addChannelTypes(ChannelType.GuildText);

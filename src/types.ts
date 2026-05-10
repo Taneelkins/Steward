@@ -111,6 +111,7 @@ export type PendingTicketLog = {
   ticketType: string;
   openerUserId: string | null;
   closedChannelId: string | null;
+  closedChannelName: string | null;
   transcriptUrl: string | null;
   status: "pending" | "logged" | "dismissed" | "needs_review" | "overdue";
   createdAt: string;

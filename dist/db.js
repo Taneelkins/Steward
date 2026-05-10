@@ -355,6 +355,7 @@ export class AppDatabase {
         ticket_type TEXT NOT NULL,
         opener_user_id TEXT,
         closed_channel_id TEXT,
+        closed_channel_name TEXT,
         transcript_url TEXT,
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -446,6 +447,7 @@ export class AppDatabase {
         this.ensureColumn("moderation_cases", "appeal_result", "TEXT");
         this.ensureColumn("moderation_cases", "punishment_length", "TEXT");
         this.ensureColumn("pending_ticket_logs", "closed_channel_id", "TEXT");
+        this.ensureColumn("pending_ticket_logs", "closed_channel_name", "TEXT");
         this.ensureColumn("staff_roles", "role_key", "TEXT");
     }
     ensureColumn(table, column, definition) {
@@ -602,6 +604,7 @@ function mapPendingTicket(row) {
         ticketType: row.ticket_type,
         openerUserId: row.opener_user_id,
         closedChannelId: row.closed_channel_id,
+        closedChannelName: row.closed_channel_name,
         transcriptUrl: row.transcript_url,
         status: row.status,
         createdAt: row.created_at,

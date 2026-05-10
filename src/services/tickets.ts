@@ -3,7 +3,7 @@ import { ChannelType, EmbedBuilder } from "discord.js";
 import type { AppDatabase } from "../db.js";
 import type { PendingTicketLog } from "../types.js";
 import { formatPoints, truncate } from "../utils/format.js";
-import { postToConfiguredChannel, safeDm, ticketActionButtons, transcriptFieldValue, transcriptLinkComponents } from "../utils/discord.js";
+import { isModMember, postToConfiguredChannel, safeDm, ticketActionButtons, transcriptFieldValue, transcriptLinkComponents } from "../utils/discord.js";
 import { addHours, discordTimestamp, nowIso } from "../utils/time.js";
 import { writeAuditAndPost } from "./audit.js";
 import { createCase } from "./cases.js";
@@ -14,6 +14,7 @@ export type ParsedTicketTranscript = {
   openerUserId: string | null;
   transcriptUrl: string | null;
   closedChannelId: string | null;
+  closedChannelName: string | null;
 };
 
 export function parseTicketToolMessage(message: Message): ParsedTicketTranscript {
@@ -45,13 +46,15 @@ export function parseTicketToolMessage(message: Message): ParsedTicketTranscript
     ])?.trim() ?? "other";
   const transcriptUrl = message.attachments.first()?.url ?? firstMatch(source, [/https?:\/\/\S+/i]) ?? message.url;
   const closedChannelId = findChannelNearLabel(source, ["channel", "ticket channel", "closed channel", "closed in"]) ?? null;
+  const closedChannelName = findTextNearLabel(source, ["ticket name", "ticket channel", "channel name", "closed in", "channel"]) ?? null;
 
   return {
     ticketId,
     ticketType: normalizeTicketType(ticketType),
     openerUserId,
     transcriptUrl,
-    closedChannelId
+    closedChannelId,
+    closedChannelName
   };
 }
 
@@ -70,8 +73,8 @@ export async function handlePotentialTranscript(db: AppDatabase, message: Messag
     const result = db.run(
       `INSERT OR IGNORE INTO pending_ticket_logs (
         guild_id, transcript_message_id, transcript_channel_id, ticket_id, ticket_type,
-        opener_user_id, closed_channel_id, transcript_url, status, created_at, due_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        opener_user_id, closed_channel_id, closed_channel_name, transcript_url, status, created_at, due_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       guild.id,
       message.id,
       message.channelId,
@@ -79,6 +82,7 @@ export async function handlePotentialTranscript(db: AppDatabase, message: Messag
       parsed.ticketType,
       parsed.openerUserId,
       parsed.closedChannelId,
+      parsed.closedChannelName,
       parsed.transcriptUrl,
       "pending",
       nowIso(),
@@ -93,12 +97,10 @@ export async function handlePotentialTranscript(db: AppDatabase, message: Messag
   if (!pending) return;
 
   // Post prompt in the closed ticket channel if it still exists; otherwise post to ticket alert.
-  if (pending.closedChannelId) {
-    const closedChannel = await guild.channels.fetch(pending.closedChannelId).catch(() => null);
-    if (closedChannel && closedChannel.type === ChannelType.GuildText) {
-      await sendTicketLogPromptToChannel(db, pending, closedChannel as TextChannel);
-      return;
-    }
+  const closedChannel = await resolveClosedChannel(guild, pending);
+  if (closedChannel) {
+    await sendTicketLogPromptToChannel(db, pending, closedChannel);
+    return;
   }
   await announcePendingTicket(db, guild, pending);
 }
@@ -169,20 +171,16 @@ export async function processOverdueTickets(db: AppDatabase, guild: Guild) {
     embed.setTitle("Ticket Log Overdue").setColor(0xe74c3c);
 
     // Try the closed ticket channel first; fall back to ticket alert if it's gone.
-    let postedInClosedChannel = false;
-    if (pending.closedChannelId) {
-      const closedChannel = await guild.channels.fetch(pending.closedChannelId).catch(() => null);
-      if (closedChannel && closedChannel.type === ChannelType.GuildText) {
-        await (closedChannel as TextChannel).send({
-          content: "This ticket log is overdue and was not logged within 12 hours.",
-          embeds: [embed],
-          components: [ticketActionButtons(pending.id, pending.transcriptUrl)],
-          allowedMentions: { parse: [] }
-        }).catch(() => null);
-        postedInClosedChannel = true;
-      }
+    const overdueClosedChannel = await resolveClosedChannel(guild, pending);
+    if (overdueClosedChannel) {
+      await overdueClosedChannel.send({
+        content: "This ticket log is overdue and was not logged within 12 hours.",
+        embeds: [embed],
+        components: [ticketActionButtons(pending.id, pending.transcriptUrl)],
+        allowedMentions: { parse: [] }
+      }).catch(() => null);
     }
-    if (!postedInClosedChannel) {
+    if (!overdueClosedChannel) {
       await postToConfiguredChannel(guild, config.ticketAlertChannelId ?? config.alertChannelId, {
         content: "A ticket transcript was not logged within 12 hours and may need admin review.",
         embeds: [embed],
@@ -206,6 +204,11 @@ export async function handleTicketButton(db: AppDatabase, interaction: ButtonInt
     return true;
   }
   const member = interaction.member as GuildMember;
+  const isMod = await isModMember(db, member);
+  if (!isMod) {
+    await interaction.reply({ content: "Only moderators can use these buttons.", ephemeral: true });
+    return true;
+  }
 
   if (action === "action") {
     await interaction.reply({
@@ -294,6 +297,40 @@ export function normalizeTicketType(value: string) {
     .replace(/[^a-z0-9_-]/g, "")
     .replace(/-+/g, "-")
     .slice(0, 50) || "other";
+}
+
+async function resolveClosedChannel(guild: Guild, pending: PendingTicketLog): Promise<TextChannel | null> {
+  // Try by stored channel ID first
+  if (pending.closedChannelId) {
+    const ch = await guild.channels.fetch(pending.closedChannelId).catch(() => null);
+    if (ch && ch.type === ChannelType.GuildText) return ch as TextChannel;
+  }
+  // Try by channel name
+  if (pending.closedChannelName) {
+    await guild.channels.fetch().catch(() => null);
+    const name = pending.closedChannelName.toLowerCase().replace(/^#+/, "");
+    const ch = guild.channels.cache.find(
+      (c) => c.type === ChannelType.GuildText && "name" in c && c.name.toLowerCase() === name
+    );
+    if (ch && ch.type === ChannelType.GuildText) return ch as TextChannel;
+  }
+  return null;
+}
+
+function findTextNearLabel(source: string, labels: string[]) {
+  const lines = source.split(/\n+/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const lower = line.toLowerCase();
+    if (labels.some((label) => lower.includes(label))) {
+      // Value may be on the same line after a colon, or on the next line
+      const sameLine = line.replace(/^[^:]+:\s*/i, "").trim();
+      const nextLine = (lines[index + 1] ?? "").trim();
+      const candidate = sameLine || nextLine;
+      if (candidate && candidate.length < 100) return candidate;
+    }
+  }
+  return null;
 }
 
 function firstMatch(source: string, patterns: RegExp[]) {

@@ -241,6 +241,10 @@ async function submitTypedLog(interaction, db, member, actionName, actionDisplay
     const guild = interaction.guild;
     const transcriptLink = interaction.options.getString("transcript_link");
     const evidence = interaction.options.getString("evidence") ?? (transcriptLink ? "See transcript." : null);
+    const appealType = interaction.options.getString("appeal_type");
+    const rawResult = interaction.options.getString("appeal_result")?.toLowerCase();
+    const appealResult = rawResult === "accepted" || rawResult === "denied" ? rawResult : null;
+    const punishmentLength = interaction.options.getString("punishment_length");
     const record = await createCase(db, {
         guild,
         targetInfo: readCaseTarget(interaction),
@@ -252,7 +256,10 @@ async function submitTypedLog(interaction, db, member, actionName, actionDisplay
         notes: interaction.options.getString("notes"),
         noAction: interaction.options.getBoolean("no_action") ?? false,
         ticketId: interaction.options.getString("ticket_id"),
-        transcriptUrl: transcriptLink
+        transcriptUrl: transcriptLink,
+        appealType,
+        appealResult,
+        punishmentLength
     });
     const pointsEnabled = db.getGuildConfig(guild.id).pointsEnabled;
     await interaction.reply({
