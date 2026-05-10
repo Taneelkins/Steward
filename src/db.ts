@@ -315,7 +315,6 @@ export class AppDatabase {
           staff_registration_channel_id TEXT,
           registration_role_id TEXT,
           ticket_transcript_channel_id TEXT,
-        ticket_alert_channel_id TEXT,
         owner_user_id TEXT,
         ticket_tool_bot_id TEXT,
         evidence_archive_channel_id TEXT,
@@ -616,7 +615,6 @@ type GuildConfigRow = {
   staff_registration_channel_id: string | null;
   registration_role_id: string | null;
   ticket_transcript_channel_id: string | null;
-  ticket_alert_channel_id: string | null;
   owner_user_id: string | null;
   ticket_tool_bot_id: string | null;
   evidence_archive_channel_id: string | null;
@@ -758,7 +756,6 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     staffRegistrationChannelId: row.staff_registration_channel_id,
     registrationRoleId: row.registration_role_id,
     ticketTranscriptChannelId: row.ticket_transcript_channel_id,
-    ticketAlertChannelId: row.ticket_alert_channel_id,
     ownerUserId: row.owner_user_id,
     ticketToolBotId: row.ticket_tool_bot_id,
     evidenceArchiveChannelId: row.evidence_archive_channel_id,

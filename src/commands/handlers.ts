@@ -429,7 +429,6 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     quota_alert_channel_id: getTextChannelOption(interaction, "quota_alerts")?.id,
     staff_registration_channel_id: getTextChannelOption(interaction, "staff_registration")?.id,
     ticket_transcript_channel_id: getTextChannelOption(interaction, "ticket_transcripts")?.id,
-    ticket_alert_channel_id: getTextChannelOption(interaction, "ticket_alerts")?.id ?? actionLogUpdates.find((update) => update.actionName === "ticket")?.channel.id,
     appeal_log_channel_id: getTextChannelOption(interaction, "logappeal")?.id ?? actionLogUpdates.find((update) => update.actionName === "appeal")?.channel.id,
     approval_channel_id: getTextChannelOption(interaction, "approval_channel")?.id,
     junior_help_channel_id: getTextChannelOption(interaction, "junior_help")?.id,
@@ -1210,7 +1209,6 @@ function saveProvisionedConfig(db: AppDatabase, guildId: string, provisioned: Pr
     registration_role_id: provisioned.canRegisterRole.id,
     audit_channel_id: provisioned.channels.auditLog.id,
     ticket_transcript_channel_id: provisioned.channels.ticketTranscripts.id,
-    ticket_alert_channel_id: provisioned.channels.logTicket.id,
     alert_channel_id: provisioned.channels.modAlerts.id,
     appeal_log_channel_id: provisioned.channels.logAppeal.id
   });
@@ -1252,7 +1250,7 @@ function savedChannelIdsFromConfig(db: AppDatabase, guildId: string): Partial<Re
     logStrike: db.getActionLogChannelId(guildId, "strike") ?? config.strikeLogChannelId,
     logRestore: db.getActionLogChannelId(guildId, "restore"),
     logDiscord: db.getActionLogChannelId(guildId, "discord") ?? db.getActionLogChannelId(guildId, "discord-ban"),
-    logTicket: db.getActionLogChannelId(guildId, "ticket") ?? config.ticketAlertChannelId,
+    logTicket: db.getActionLogChannelId(guildId, "ticket"),
     logAppeal: config.appealLogChannelId,
     quota: config.quotaChannelId,
     auditLog: config.auditChannelId,
@@ -1373,7 +1371,6 @@ async function handleConfigCheck(interaction: ChatInputCommandInteraction, db: A
     ch(config.quotaAlertChannelId, "Quota Alerts"),
     ch(config.staffRegistrationChannelId, "Staff Registration"),
     ch(config.ticketTranscriptChannelId, "Ticket Transcripts", true),
-    ch(config.ticketAlertChannelId, "Ticket Alerts", true),
     ch(config.evidenceArchiveChannelId, "Evidence Archive", true),
     ch(config.approvalChannelId, "CM Approval", true),
     ch(config.juniorHelpChannelId, "Junior Help", true)

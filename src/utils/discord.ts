@@ -194,26 +194,6 @@ export function configSummaryEmbed(config: GuildConfig, extra: { ingameLogChanne
     );
 }
 
-export function ticketActionButtons(ticketId: number, transcriptUrl?: string | null) {
-  const buttons = [
-    new ButtonBuilder()
-      .setCustomId(`ticketlog:noaction:${ticketId}`)
-      .setLabel("Log No Action")
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(`ticketlog:action:${ticketId}`)
-      .setLabel("Log Action")
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId(`ticketlog:dismiss:${ticketId}`)
-      .setLabel("Dismiss")
-      .setStyle(ButtonStyle.Danger)
-  ];
-  const transcriptButton = transcriptLinkButton(transcriptUrl);
-  if (transcriptButton) buttons.push(transcriptButton);
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
-}
-
 export function textPreview(channel: TextBasedChannel | null, fallback = "Unknown") {
   return channel && "name" in channel ? `#${truncate(channel.name, 80)}` : fallback;
 }

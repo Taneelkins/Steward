@@ -11,7 +11,6 @@ export type GuildConfig = {
   staffRegistrationChannelId: string | null;
   registrationRoleId: string | null;
   ticketTranscriptChannelId: string | null;
-  ticketAlertChannelId: string | null;
   ownerUserId: string | null;
   ticketToolBotId: string | null;
   evidenceArchiveChannelId: string | null;

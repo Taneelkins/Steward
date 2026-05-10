@@ -117,7 +117,6 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "quota_alerts", "Quota alert channel (warnings, pings, end-of-period reports)."))
         .addChannelOption((option) => textChannelOption(option, "staff_registration", "Staff registration log channel."))
         .addChannelOption((option) => textChannelOption(option, "ticket_transcripts", "Ticket Tool transcript channel."))
-        .addChannelOption((option) => textChannelOption(option, "ticket_alerts", "Ticket alert channel."))
         .addChannelOption((option) => textChannelOption(option, "logingame", "Ingame log channel."))
         .addChannelOption((option) => textChannelOption(option, "logstrike", "Strike log channel."))
         .addChannelOption((option) => textChannelOption(option, "logrestore", "Restore log channel."))
