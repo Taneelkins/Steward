@@ -946,6 +946,7 @@ function missingRequiredFields(db, draft) {
 }
 function addMediaLinks(draft, message) {
     let added = 0;
+    const alreadyHasProofForMessage = draft.mediaLinks.some((l) => l.sourceUrl === null && l.url === message.url);
     for (const attachment of message.attachments.values()) {
         if (draft.mediaLinks.length >= MAX_MEDIA_LINKS)
             break;
@@ -954,6 +955,13 @@ function addMediaLinks(draft, message) {
         // Store the original attachment URL as sourceUrl for archiving later
         draft.mediaLinks.push({ label, kind, url: message.url, sourceUrl: attachment.url });
         added += 1;
+    }
+    // Add a permanent "Proof" jump-link to the original upload message.
+    // sourceUrl is null so archiveMediaLinks skips it and the URL stays permanent.
+    if (added > 0 && !alreadyHasProofForMessage) {
+        const proofCount = draft.mediaLinks.filter((l) => l.sourceUrl === null).length + 1;
+        const label = proofCount === 1 ? "Proof" : `Proof ${proofCount}`;
+        draft.mediaLinks.push({ label, kind: "file", url: message.url, sourceUrl: null });
     }
     return added;
 }
