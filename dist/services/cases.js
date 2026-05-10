@@ -1,4 +1,4 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } from "discord.js";
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, PermissionFlagsBits, TextInputBuilder, TextInputStyle } from "discord.js";
 import { formatMultiplier, formatPoints, truncate } from "../utils/format.js";
 import { caseLinkComponents, getStaffTier, getTextChannel, postToConfiguredChannel, transcriptFieldValue, userLabel } from "../utils/discord.js";
 import { colors } from "../utils/theme.js";
@@ -411,8 +411,9 @@ export async function handleApprovalButton(db, interaction) {
     if (isNaN(caseId))
         return false;
     const guildMember = interaction.member;
+    const isOwnerOrAdmin = guildMember.id === interaction.guild.ownerId || guildMember.permissions.has(PermissionFlagsBits.Administrator);
     const tier = getStaffTier(db, guildMember);
-    if (tier !== "community") {
+    if (!isOwnerOrAdmin && tier !== "community") {
         await interaction.reply({ content: "Only Community Managers can approve or deny cases.", ephemeral: true });
         return true;
     }
@@ -547,8 +548,9 @@ export async function handleJuniorReviewButton(db, interaction) {
     if (isNaN(caseId) || (action !== "approve" && action !== "deny"))
         return false;
     const guildMember = interaction.member;
+    const isOwnerOrAdmin = guildMember.id === interaction.guild.ownerId || guildMember.permissions.has(PermissionFlagsBits.Administrator);
     const tier = getStaffTier(db, guildMember);
-    if (tier === "junior" || tier === null) {
+    if (!isOwnerOrAdmin && (tier === "junior" || tier === null)) {
         await interaction.reply({ content: "Junior Moderators cannot approve or deny logs.", ephemeral: true });
         return true;
     }
