@@ -347,7 +347,6 @@ async function submitTypedLog(interaction: ChatInputCommandInteraction, db: AppD
     evidence,
     notes: interaction.options.getString("notes"),
     noAction: interaction.options.getBoolean("no_action") ?? false,
-    ticketId: interaction.options.getString("ticket_id"),
     transcriptUrl: transcriptLink,
     appealType,
     appealResult,
@@ -645,7 +644,6 @@ async function handleCase(interaction: ChatInputCommandInteraction, { db }: Comm
       evidence,
       notes: interaction.options.getString("notes"),
       noAction: interaction.options.getBoolean("no_action") ?? false,
-      ticketId: interaction.options.getString("ticket_id"),
       transcriptUrl: transcriptLink,
       happenedAt: interaction.options.getString("happened_at")
     });
@@ -1111,7 +1109,7 @@ async function handleBackup(interaction: ChatInputCommandInteraction, { db, env 
 async function handleExport(interaction: ChatInputCommandInteraction, { db, env }: CommandContext, member: GuildMember) {
   await requireAdmin(db, member);
   await interaction.deferReply({ ephemeral: true });
-  const table = interaction.options.getString("table", true) as "cases" | "points" | "quotas" | "tickets";
+  const table = interaction.options.getString("table", true) as "cases" | "points" | "quotas";
   if (table === "points") assertPointsEnabled(db, interaction.guild!.id);
   const { filePath, rows } = await exportTable(db, env.exportDir, interaction.guild!.id, table);
   const attachment = new AttachmentBuilder(filePath);
@@ -1248,7 +1246,6 @@ function readSetupChannelOverrides(interaction: ChatInputCommandInteraction): Pa
     quota: getTextChannelOption(interaction, "quota_channel"),
     staffRegistration: getTextChannelOption(interaction, "staff_registration_channel"),
     auditLog: getTextChannelOption(interaction, "audit_channel"),
-    ticketTranscripts: getTextChannelOption(interaction, "ticket_transcripts_channel"),
     logBan: getTextChannelOption(interaction, "logingame_channel"),
     logStrike: getTextChannelOption(interaction, "logstrike_channel"),
     logRestore: getTextChannelOption(interaction, "logrestore_channel"),
@@ -1294,7 +1291,6 @@ function saveProvisionedConfig(db: AppDatabase, guildId: string, provisioned: Pr
     staff_registration_channel_id: provisioned.channels.staffRegistration.id,
     registration_role_id: provisioned.canRegisterRole.id,
     audit_channel_id: provisioned.channels.auditLog.id,
-    ticket_transcript_channel_id: provisioned.channels.ticketTranscripts.id,
     alert_channel_id: provisioned.channels.modAlerts.id,
     appeal_log_channel_id: provisioned.channels.logAppeal.id
   });
@@ -1341,8 +1337,7 @@ function savedChannelIdsFromConfig(db: AppDatabase, guildId: string): Partial<Re
     quota: config.quotaChannelId,
     auditLog: config.auditChannelId,
     modAlerts: config.alertChannelId,
-    staffRegistration: config.staffRegistrationChannelId,
-    ticketTranscripts: config.ticketTranscriptChannelId
+    staffRegistration: config.staffRegistrationChannelId
   };
 }
 
