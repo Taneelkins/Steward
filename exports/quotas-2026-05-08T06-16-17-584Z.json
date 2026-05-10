@@ -1,0 +1,10 @@
+[
+  {
+    "id": 1,
+    "guild_id": "1502134298323587092",
+    "period_start": "2026-05-08T05:19:37.994Z",
+    "period_end": "2026-05-08T05:20:00.000Z",
+    "status_json": "[{\"userId\":\"616267913799925782\",\"requiredLogs\":10,\"loggedActions\":0,\"missing\":10,\"status\":\"missed\"}]",
+    "created_at": "2026-05-08T05:20:02.905Z"
+  }
+]

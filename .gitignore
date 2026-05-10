@@ -1,11 +1,5 @@
 node_modules/
-dist/
 .env
-data/*.sqlite
-data/*.sqlite-*
-backups/*.sqlite
-exports/*.json
-exports/*.csv
 .DS_Store
 npm-debug.log*
 bot.*.log
