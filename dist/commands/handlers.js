@@ -1124,14 +1124,22 @@ async function handleConfigCheck(interaction, db, guildId) {
     const channelLines = [
         ch(config.actionLogChannelId, "Action Log (fallback)"),
         ch(db.getActionLogChannelId(guildId, "ban"), "Ingame Log"),
-        ch(config.appealLogChannelId, "Appeal Log"),
+        ch(db.getActionLogChannelId(guildId, "strike"), "Strike Log"),
+        ch(db.getActionLogChannelId(guildId, "restore"), "Restore Log"),
+        ch(db.getActionLogChannelId(guildId, "discord"), "Discord Log"),
+        ch(db.getActionLogChannelId(guildId, "ticket"), "Ticket Log"),
+        ch(db.getActionLogChannelId(guildId, "other"), "Other Log", true),
+        ch(config.appealLogChannelId ?? db.getActionLogChannelId(guildId, "appeal"), "Appeal Log"),
         ch(config.alertChannelId, "Alerts"),
         ch(config.auditChannelId, "Audit Log"),
         ch(config.quotaChannelId, "Quota Board"),
         ch(config.quotaAlertChannelId, "Quota Alerts"),
         ch(config.staffRegistrationChannelId, "Staff Registration"),
         ch(config.ticketTranscriptChannelId, "Ticket Transcripts", true),
-        ch(config.approvalChannelId, "CM Approval", true)
+        ch(config.ticketAlertChannelId, "Ticket Alerts", true),
+        ch(config.evidenceArchiveChannelId, "Evidence Archive", true),
+        ch(config.approvalChannelId, "CM Approval", true),
+        ch(config.juniorHelpChannelId, "Junior Help", true)
     ];
     const roleLines = [
         ...tierLabels.map(({ key, label }) => {
