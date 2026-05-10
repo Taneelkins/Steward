@@ -157,6 +157,10 @@ export class AppDatabase {
     listRecentCases(guildId, limit = 10) {
         return this.all("SELECT * FROM moderation_cases WHERE guild_id = ? ORDER BY id DESC LIMIT ?", guildId, limit).map(mapCase);
     }
+    getPendingTicket(guildId, id) {
+        const row = this.get("SELECT * FROM pending_ticket_logs WHERE guild_id = ? AND id = ?", guildId, id);
+        return row ? mapPendingTicket(row) : undefined;
+    }
     insertEvidenceArchive(values) {
         this.run(`INSERT INTO evidence_archives (
         guild_id, case_id, source_message_url, archived_message_url, moderator_user_id,
@@ -177,7 +181,9 @@ export class AppDatabase {
           quota_alert_channel_id TEXT,
           staff_registration_channel_id TEXT,
           registration_role_id TEXT,
+          ticket_transcript_channel_id TEXT,
         owner_user_id TEXT,
+        ticket_tool_bot_id TEXT,
         evidence_archive_channel_id TEXT,
         appeal_log_channel_id TEXT,
         approval_channel_id TEXT,
@@ -343,6 +349,34 @@ export class AppDatabase {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS pending_ticket_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        transcript_message_id TEXT NOT NULL,
+        transcript_channel_id TEXT NOT NULL,
+        ticket_id TEXT,
+        ticket_type TEXT NOT NULL,
+        opener_user_id TEXT,
+        closed_channel_id TEXT,
+        closed_channel_name TEXT,
+        transcript_url TEXT,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        due_at TEXT NOT NULL,
+        logged_case_id INTEGER,
+        admin_notes TEXT,
+        UNIQUE (guild_id, transcript_message_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS ticket_action_mappings (
+        guild_id TEXT NOT NULL,
+        ticket_type TEXT NOT NULL,
+        action_name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (guild_id, ticket_type)
+      );
+
       CREATE TABLE IF NOT EXISTS staff_roles (
         guild_id TEXT NOT NULL,
         role_id TEXT NOT NULL,
@@ -389,6 +423,7 @@ export class AppDatabase {
       CREATE INDEX IF NOT EXISTS idx_cases_mod_created ON moderation_cases (guild_id, moderator_user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_cases_target_created ON moderation_cases (guild_id, target_user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_ledger_mod ON point_ledger (guild_id, moderator_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_pending_due ON pending_ticket_logs (guild_id, status, due_at);
     `);
         this.ensureColumn("guild_configs", "staff_registration_channel_id", "TEXT");
         this.ensureColumn("guild_configs", "registration_role_id", "TEXT");
@@ -421,6 +456,8 @@ export class AppDatabase {
         this.ensureColumn("moderation_cases", "junior_review_status", "TEXT");
         this.ensureColumn("moderation_cases", "junior_review_message_id", "TEXT");
         this.ensureColumn("guild_configs", "junior_help_channel_id", "TEXT");
+        this.ensureColumn("pending_ticket_logs", "closed_channel_id", "TEXT");
+        this.ensureColumn("pending_ticket_logs", "closed_channel_name", "TEXT");
         this.ensureColumn("staff_roles", "role_key", "TEXT");
     }
     ensureColumn(table, column, definition) {
@@ -443,7 +480,9 @@ function mapGuildConfig(row) {
         quotaAlertChannelId: row.quota_alert_channel_id,
         staffRegistrationChannelId: row.staff_registration_channel_id,
         registrationRoleId: row.registration_role_id,
+        ticketTranscriptChannelId: row.ticket_transcript_channel_id,
         ownerUserId: row.owner_user_id,
+        ticketToolBotId: row.ticket_tool_bot_id,
         evidenceArchiveChannelId: row.evidence_archive_channel_id,
         appealLogChannelId: row.appeal_log_channel_id,
         approvalChannelId: row.approval_channel_id,
@@ -469,6 +508,7 @@ function mapGuildConfig(row) {
         quotaWarningSentAt: row.quota_warning_sent_at,
         multiplierMilli: row.multiplier_milli,
         multiplierEndsAt: row.multiplier_ends_at,
+        lastTranscriptMessageId: row.last_transcript_message_id,
         createdAt: row.created_at,
         updatedAt: row.updated_at
     };
@@ -517,6 +557,7 @@ function mapCase(row) {
         flags: row.flags,
         isLate: row.is_late === 1,
         isNoAction: row.is_no_action === 1,
+        ticketId: row.ticket_id,
         transcriptUrl: row.transcript_url,
         mediaLinks: parseMediaLinks(row.media_links_json),
         appealType: row.appeal_type,
@@ -573,6 +614,25 @@ function parseStringList(value) {
     catch {
         return [];
     }
+}
+function mapPendingTicket(row) {
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        transcriptMessageId: row.transcript_message_id,
+        transcriptChannelId: row.transcript_channel_id,
+        ticketId: row.ticket_id,
+        ticketType: row.ticket_type,
+        openerUserId: row.opener_user_id,
+        closedChannelId: row.closed_channel_id,
+        closedChannelName: row.closed_channel_name,
+        transcriptUrl: row.transcript_url,
+        status: row.status,
+        createdAt: row.created_at,
+        dueAt: row.due_at,
+        loggedCaseId: row.logged_case_id,
+        adminNotes: row.admin_notes
+    };
 }
 function mapStaffRole(row) {
     return {

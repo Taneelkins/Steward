@@ -25,6 +25,7 @@ export function buildCommands(options = {}) {
             .addChannelOption((option) => textChannelOption(option, "quota_channel", "Existing quota alerts/status channel."))
             .addChannelOption((option) => textChannelOption(option, "staff_registration_channel", "Existing staff registration channel."))
             .addChannelOption((option) => textChannelOption(option, "audit_channel", "Existing audit log channel."))
+            .addChannelOption((option) => textChannelOption(option, "ticket_transcripts_channel", "Existing Ticket Tool transcript channel."))
             .addChannelOption((option) => textChannelOption(option, "logingame_channel", "Existing ingame log channel."))
             .addChannelOption((option) => textChannelOption(option, "logstrike_channel", "Existing strike log channel."))
             .addChannelOption((option) => textChannelOption(option, "logrestore_channel", "Existing restore log channel."))
@@ -56,6 +57,7 @@ export function buildCommands(options = {}) {
             .setDescription("View strike records.")
             .addUserOption((option) => option.setName("target").setDescription("Member.").setRequired(true)),
         quotaCommand(pointsEnabled),
+        ticketlogCommand(),
         new SlashCommandBuilder()
             .setName("staff")
             .setDescription("View staff profiles.")
@@ -114,6 +116,7 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "quota", "Quota status board channel (pinned message only)."))
         .addChannelOption((option) => textChannelOption(option, "quota_alerts", "Quota alert channel (warnings, pings, end-of-period reports)."))
         .addChannelOption((option) => textChannelOption(option, "staff_registration", "Staff registration log channel."))
+        .addChannelOption((option) => textChannelOption(option, "ticket_transcripts", "Ticket Tool transcript channel."))
         .addChannelOption((option) => textChannelOption(option, "logingame", "Ingame log channel."))
         .addChannelOption((option) => textChannelOption(option, "logstrike", "Strike log channel."))
         .addChannelOption((option) => textChannelOption(option, "logrestore", "Restore log channel."))
@@ -123,7 +126,8 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "approval_channel", "CM approval channel for quota/points review."))
         .addChannelOption((option) => textChannelOption(option, "junior_help", "Junior Mod review channel (logs posted here for approve/deny before going live)."))
         .addChannelOption((option) => textChannelOption(option, "evidence_archive", "Channel where media evidence attachments are archived."))
-        .addUserOption((option) => option.setName("owner").setDescription("Owner/admin DM target.")))
+        .addUserOption((option) => option.setName("owner").setDescription("Owner/admin DM target."))
+        .addStringOption((option) => option.setName("ticket_tool_bot_id").setDescription("Ticket Tool bot user ID.")))
         .addSubcommand((sub) => sub
         .setName("behavior")
         .setDescription("Configure bot behavior settings.")
@@ -201,6 +205,7 @@ function caseCommand(pointsEnabled) {
         .addStringOption((option) => option.setName("evidence").setDescription("Evidence link or text."))
         .addStringOption((option) => option.setName("notes").setDescription("Extra details."))
         .addBooleanOption((option) => option.setName("no_action").setDescription("Ticket required no moderation action."))
+        .addStringOption((option) => option.setName("ticket_id").setDescription("Ticket ID, if this came from a ticket."))
         .addStringOption((option) => option.setName("happened_at").setDescription("Optional ISO date/time for late-log flag.")))
         .addSubcommand((sub) => sub
         .setName("edit")
@@ -309,11 +314,30 @@ function quotaCommand(pointsEnabled) {
         .addSubcommand((sub) => sub.setName("list").setDescription("List active quota exemptions.")))
         .setDefaultMemberPermissions(juniorDefault);
 }
+function ticketlogCommand() {
+    return new SlashCommandBuilder()
+        .setName("ticketlog")
+        .setDescription("Manage pending ticket logs.")
+        .addSubcommand((sub) => sub.setName("pending").setDescription("Show pending ticket logs."))
+        .addSubcommand((sub) => sub
+        .setName("dismiss")
+        .setDescription("Dismiss a pending ticket log.")
+        .addIntegerOption((option) => option.setName("pending_id").setDescription("Pending ticket log ID.").setRequired(true))
+        .addStringOption((option) => option.setName("reason").setDescription("Dismissal reason.").setRequired(true)))
+        .addSubcommand((sub) => sub.setName("check-now").setDescription("Run ticket overdue checks now."))
+        .addSubcommand((sub) => sub
+        .setName("map")
+        .setDescription("Map a ticket type to an action preset.")
+        .addStringOption((option) => option.setName("ticket_type").setDescription("Ticket type.").setRequired(true))
+        .addStringOption((option) => option.setName("action").setDescription("Action preset.").setRequired(true)))
+        .setDefaultMemberPermissions(headDefault);
+}
 function exportCommand(pointsEnabled) {
     const choices = [
         { name: "cases", value: "cases" },
         ...(pointsEnabled ? [{ name: "points", value: "points" }] : []),
-        { name: "quotas", value: "quotas" }
+        { name: "quotas", value: "quotas" },
+        { name: "tickets", value: "tickets" }
     ];
     return new SlashCommandBuilder()
         .setName("export")
@@ -343,6 +367,7 @@ function logCommand() {
         .addStringOption((option) => option.setName("evidence").setDescription("Evidence link or text."))
         .addStringOption((option) => option.setName("notes").setDescription("Extra details."))
         .addBooleanOption((option) => option.setName("no_action").setDescription("Ticket required no moderation action."))
+        .addStringOption((option) => option.setName("ticket_id").setDescription("Ticket ID, if available."))
         .addStringOption((option) => option.setName("happened_at").setDescription("Optional ISO date/time for late-log flag."))
         .addStringOption((option) => option.setName("appeal_type").setDescription("Appeal type for appeal logs: ban-appeal, timeout-appeal, warn-appeal, mute-appeal, ingame-appeal."))
         .addStringOption((option) => option.setName("appeal_result").setDescription("Result for appeal logs: accepted or denied."))

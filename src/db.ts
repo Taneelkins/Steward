@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ActionPreset, CaseMediaLink, GuildConfig, ModerationCase } from "./types.js";
+import type { ActionPreset, CaseMediaLink, GuildConfig, ModerationCase, PendingTicketLog } from "./types.js";
 import { nowIso } from "./utils/time.js";
 
 type DbValue = string | number | bigint | null;
@@ -270,6 +270,11 @@ export class AppDatabase {
     ).map(mapCase);
   }
 
+  getPendingTicket(guildId: string, id: number) {
+    const row = this.get<PendingTicketRow>("SELECT * FROM pending_ticket_logs WHERE guild_id = ? AND id = ?", guildId, id);
+    return row ? mapPendingTicket(row) : undefined;
+  }
+
   insertEvidenceArchive(values: {
     guildId: string;
     caseId: number | null;
@@ -309,7 +314,9 @@ export class AppDatabase {
           quota_alert_channel_id TEXT,
           staff_registration_channel_id TEXT,
           registration_role_id TEXT,
+          ticket_transcript_channel_id TEXT,
         owner_user_id TEXT,
+        ticket_tool_bot_id TEXT,
         evidence_archive_channel_id TEXT,
         appeal_log_channel_id TEXT,
         approval_channel_id TEXT,
@@ -475,6 +482,34 @@ export class AppDatabase {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS pending_ticket_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        transcript_message_id TEXT NOT NULL,
+        transcript_channel_id TEXT NOT NULL,
+        ticket_id TEXT,
+        ticket_type TEXT NOT NULL,
+        opener_user_id TEXT,
+        closed_channel_id TEXT,
+        closed_channel_name TEXT,
+        transcript_url TEXT,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        due_at TEXT NOT NULL,
+        logged_case_id INTEGER,
+        admin_notes TEXT,
+        UNIQUE (guild_id, transcript_message_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS ticket_action_mappings (
+        guild_id TEXT NOT NULL,
+        ticket_type TEXT NOT NULL,
+        action_name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (guild_id, ticket_type)
+      );
+
       CREATE TABLE IF NOT EXISTS staff_roles (
         guild_id TEXT NOT NULL,
         role_id TEXT NOT NULL,
@@ -521,6 +556,7 @@ export class AppDatabase {
       CREATE INDEX IF NOT EXISTS idx_cases_mod_created ON moderation_cases (guild_id, moderator_user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_cases_target_created ON moderation_cases (guild_id, target_user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_ledger_mod ON point_ledger (guild_id, moderator_user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_pending_due ON pending_ticket_logs (guild_id, status, due_at);
     `);
 
     this.ensureColumn("guild_configs", "staff_registration_channel_id", "TEXT");
@@ -554,6 +590,8 @@ export class AppDatabase {
     this.ensureColumn("moderation_cases", "junior_review_status", "TEXT");
     this.ensureColumn("moderation_cases", "junior_review_message_id", "TEXT");
     this.ensureColumn("guild_configs", "junior_help_channel_id", "TEXT");
+    this.ensureColumn("pending_ticket_logs", "closed_channel_id", "TEXT");
+    this.ensureColumn("pending_ticket_logs", "closed_channel_name", "TEXT");
     this.ensureColumn("staff_roles", "role_key", "TEXT");
   }
 
@@ -576,7 +614,9 @@ type GuildConfigRow = {
   quota_alert_channel_id: string | null;
   staff_registration_channel_id: string | null;
   registration_role_id: string | null;
+  ticket_transcript_channel_id: string | null;
   owner_user_id: string | null;
+  ticket_tool_bot_id: string | null;
   evidence_archive_channel_id: string | null;
   appeal_log_channel_id: string | null;
   approval_channel_id: string | null;
@@ -602,6 +642,7 @@ type GuildConfigRow = {
   quota_warning_sent_at: string | null;
   multiplier_milli: number;
   multiplier_ends_at: string | null;
+  last_transcript_message_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -648,6 +689,7 @@ type CaseRow = {
   flags: string;
   is_late: number;
   is_no_action: number;
+  ticket_id: string | null;
   transcript_url: string | null;
   media_links_json: string | null;
   appeal_type: string | null;
@@ -661,6 +703,24 @@ type CaseRow = {
   updated_at: string;
   voided_at: string | null;
   void_reason: string | null;
+};
+
+type PendingTicketRow = {
+  id: number;
+  guild_id: string;
+  transcript_message_id: string;
+  transcript_channel_id: string;
+  ticket_id: string | null;
+  ticket_type: string;
+  opener_user_id: string | null;
+  closed_channel_id: string | null;
+  closed_channel_name: string | null;
+  transcript_url: string | null;
+  status: "pending" | "logged" | "dismissed" | "needs_review" | "overdue";
+  created_at: string;
+  due_at: string;
+  logged_case_id: number | null;
+  admin_notes: string | null;
 };
 
 type StaffRoleRow = {
@@ -695,7 +755,9 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     quotaAlertChannelId: row.quota_alert_channel_id,
     staffRegistrationChannelId: row.staff_registration_channel_id,
     registrationRoleId: row.registration_role_id,
+    ticketTranscriptChannelId: row.ticket_transcript_channel_id,
     ownerUserId: row.owner_user_id,
+    ticketToolBotId: row.ticket_tool_bot_id,
     evidenceArchiveChannelId: row.evidence_archive_channel_id,
     appealLogChannelId: row.appeal_log_channel_id,
     approvalChannelId: row.approval_channel_id,
@@ -721,6 +783,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     quotaWarningSentAt: row.quota_warning_sent_at,
     multiplierMilli: row.multiplier_milli,
     multiplierEndsAt: row.multiplier_ends_at,
+    lastTranscriptMessageId: row.last_transcript_message_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -771,6 +834,7 @@ function mapCase(row: CaseRow): ModerationCase {
     flags: row.flags,
     isLate: row.is_late === 1,
     isNoAction: row.is_no_action === 1,
+    ticketId: row.ticket_id,
     transcriptUrl: row.transcript_url,
     mediaLinks: parseMediaLinks(row.media_links_json),
     appealType: row.appeal_type,
@@ -821,6 +885,26 @@ function parseStringList(value: string | null) {
   } catch {
     return [];
   }
+}
+
+function mapPendingTicket(row: PendingTicketRow): PendingTicketLog {
+  return {
+    id: row.id,
+    guildId: row.guild_id,
+    transcriptMessageId: row.transcript_message_id,
+    transcriptChannelId: row.transcript_channel_id,
+    ticketId: row.ticket_id,
+    ticketType: row.ticket_type,
+    openerUserId: row.opener_user_id,
+    closedChannelId: row.closed_channel_id,
+    closedChannelName: row.closed_channel_name,
+    transcriptUrl: row.transcript_url,
+    status: row.status,
+    createdAt: row.created_at,
+    dueAt: row.due_at,
+    loggedCaseId: row.logged_case_id,
+    adminNotes: row.admin_notes
+  };
 }
 
 function mapStaffRole(row: StaffRoleRow): StaffRoleConfig {

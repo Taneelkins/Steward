@@ -10,6 +10,7 @@ import { assertRuntimeEnv, readEnv } from "./env.js";
 import { deployCommands, deployCommandsForGuild } from "./deploy-commands.js";
 import { handleChatInputCommand } from "./commands/handlers.js";
 import { runStartupRecovery, startScheduler } from "./scheduler.js";
+import { handlePotentialTranscript } from "./services/tickets.js";
 import { handleLogButton, handleLogMediaMessage, handleLogModal, injectDraftFromDeniedCase, initDraftPersistence } from "./services/logWorkflow.js";
 import { handleHelpButton } from "./services/helpMenu.js";
 import { handleApprovalButton, handleJuniorReviewButton, handleJuniorReviewModal } from "./services/cases.js";
@@ -125,6 +126,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 client.on(Events.MessageCreate, async (message) => {
   await handleLogMediaMessage(db, message).catch((error) => {
     console.error("Log media handling failed:", error);
+  });
+  await handlePotentialTranscript(db, message).catch((error) => {
+    console.error("Ticket transcript handling failed:", error);
   });
 });
 
