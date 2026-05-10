@@ -1148,10 +1148,12 @@ async function handleConfigCheck(interaction, db, guildId) {
             return found ? `✅ ${label}: <@&${found.roleId}>` : `❌ ${label}: Not set`;
         }),
         role(config.registrationRoleId, "Can Register"),
-        config.juniorEscalationRoleIds.length > 0 ? `✅ Junior Escalation: configured` : `⬜ Junior Escalation: Not set (optional)`
+        config.juniorEscalationRoleIds.length > 0 ? `✅ Junior Escalation: configured` : `⬜ Junior Escalation: Not set (optional)`,
+        config.juniorOtherEscalationRoleIds.length > 0 ? `✅ Junior Other Escalation: configured` : `⬜ Junior Other Escalation: Not set (optional)`
     ];
     const otherLines = [
         user(config.ownerUserId, "Owner DM"),
+        bool(config.pointsEnabled, "Point System Enabled"),
         bool(config.quotaEnabled, "Quota Enabled"),
         bool(Boolean(config.quotaPeriodStart && config.quotaPeriodEnd), "Quota Period Active")
     ];
