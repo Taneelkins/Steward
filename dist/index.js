@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 import { AppDatabase } from "./db.js";
 import { assertRuntimeEnv, readEnv } from "./env.js";
@@ -5,10 +6,11 @@ import { deployCommands, deployCommandsForGuild } from "./deploy-commands.js";
 import { handleChatInputCommand } from "./commands/handlers.js";
 import { runStartupRecovery, startScheduler } from "./scheduler.js";
 import { handleTicketButton, handlePotentialTranscript } from "./services/tickets.js";
-import { handleLogButton, handleLogMediaMessage, handleLogModal } from "./services/logWorkflow.js";
+import { handleLogButton, handleLogMediaMessage, handleLogModal, initDraftPersistence } from "./services/logWorkflow.js";
 import { handleHelpButton } from "./services/helpMenu.js";
 const env = readEnv();
 assertRuntimeEnv(env);
+initDraftPersistence(path.join(path.dirname(env.databasePath), "drafts"));
 const db = new AppDatabase(env.databasePath, env.defaultTimezone);
 const client = new Client({
     intents: [

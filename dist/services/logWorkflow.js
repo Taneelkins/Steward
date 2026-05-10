@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, PermissionFlagsBits, TextInputBuilder, TextInputStyle } from "discord.js";
 import { buildCaseLogEmbed, createCase, effectiveActionPoints, formatLoggedActionName } from "./cases.js";
 import { formatPoints, truncate } from "../utils/format.js";
@@ -8,7 +10,73 @@ import { colors } from "../utils/theme.js";
 const sessions = new Map();
 const sessionsByUser = new Map();
 const SESSION_TTL_MS = 5 * 60 * 1000;
+const DRAFT_STALE_MS = 30 * 60 * 1000;
 const MAX_MEDIA_LINKS = 20;
+// ── Draft persistence ───────────────────────────────────────────────────────
+let draftsDir = "";
+export function initDraftPersistence(dir) {
+    draftsDir = dir;
+    fs.mkdirSync(dir, { recursive: true });
+    loadDraftsFromDisk();
+}
+function draftFilePath(guildId, userId) {
+    return path.join(draftsDir, `${guildId}-${userId}.json`);
+}
+function saveDraftToDisk(draft) {
+    if (!draftsDir)
+        return;
+    try {
+        const data = {
+            id: draft.id, guildId: draft.guildId, userId: draft.userId,
+            channelId: draft.channelId, stage: draft.stage, actionName: draft.actionName,
+            actionDisplayName: draft.actionDisplayName, appealType: draft.appealType,
+            appealResult: draft.appealResult, punishmentLength: draft.punishmentLength,
+            targetInfo: draft.targetInfo, reason: draft.reason, evidence: draft.evidence,
+            notes: draft.notes, noAction: draft.noAction, ticketId: draft.ticketId,
+            transcriptUrl: draft.transcriptUrl, mediaLinks: draft.mediaLinks,
+            mediaCaptureEnabled: draft.mediaCaptureEnabled, happenedAt: draft.happenedAt,
+            isHeadMod: draft.isHeadMod, createdAt: draft.createdAt, updatedAt: draft.updatedAt
+        };
+        fs.writeFileSync(draftFilePath(draft.guildId, draft.userId), JSON.stringify(data), "utf8");
+    }
+    catch {
+        // Non-critical — ignore write errors
+    }
+}
+function deleteDraftFromDisk(guildId, userId) {
+    if (!draftsDir)
+        return;
+    try {
+        fs.unlinkSync(draftFilePath(guildId, userId));
+    }
+    catch { /* already gone */ }
+}
+function loadDraftsFromDisk() {
+    if (!draftsDir)
+        return;
+    let files;
+    try {
+        files = fs.readdirSync(draftsDir).filter((f) => f.endsWith(".json"));
+    }
+    catch {
+        return;
+    }
+    for (const file of files) {
+        try {
+            const raw = fs.readFileSync(path.join(draftsDir, file), "utf8");
+            const data = JSON.parse(raw);
+            if (Date.now() - data.updatedAt > DRAFT_STALE_MS) {
+                fs.unlinkSync(path.join(draftsDir, file));
+                continue;
+            }
+            const draft = { ...data, timeout: null, editReply: null };
+            sessions.set(draft.id, draft);
+            sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
+            console.log(`Recovered log draft ${draft.id} for user ${draft.userId} in guild ${draft.guildId}`);
+        }
+        catch { /* corrupt file — skip */ }
+    }
+}
 const logActions = [
     { id: "ingame", label: "Ingame", actionName: "ban", displayName: "Ingame" },
     { id: "strike", label: "Strike", actionName: "strike", displayName: "Strike" },
@@ -41,8 +109,16 @@ export function resolveLogAction(value) {
     return logActions.find((action) => action.id === value || action.actionName === value) ?? null;
 }
 export async function startInteractiveLog(interaction, db, member) {
-    const config = db.getGuildConfig(interaction.guild.id);
-    await cancelPendingLogForUser(interaction.guild.id, member.id, "Previous pending log cancelled because you started a new log.");
+    const guild = interaction.guild;
+    // Check for a recovered draft (loaded from disk after restart — has no active interaction)
+    const existingDraftId = sessionsByUser.get(sessionUserKey(guild.id, member.id));
+    const existingDraft = existingDraftId ? sessions.get(existingDraftId) : null;
+    if (existingDraft && existingDraft.editReply === null) {
+        await interaction.reply({ ...recoveryPromptPayload(existingDraft), ephemeral: true });
+        return;
+    }
+    await cancelPendingLogForUser(guild.id, member.id, "Previous pending log cancelled because you started a new log.");
+    const config = db.getGuildConfig(guild.id);
     if (!config.interactiveLogEnabled) {
         await interaction.reply({
             content: "Interactive logging is disabled for this server. Use `/log action:` with typed fields instead.",
@@ -52,13 +128,10 @@ export async function startInteractiveLog(interaction, db, member) {
     }
     const tier = getStaffTier(db, member);
     const isHeadMod = tier === "head" || tier === "community" || member.permissions.has(PermissionFlagsBits.Administrator);
-    const draft = createDraft(interaction.guild.id, member.id, interaction.channelId, isHeadMod);
+    const draft = createDraft(guild.id, member.id, interaction.channelId, isHeadMod);
     sessions.set(draft.id, draft);
     sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
-    await interaction.reply({
-        ...previewPayload(db, draft),
-        ephemeral: true
-    });
+    await interaction.reply({ ...previewPayload(db, draft), ephemeral: true });
     draft.editReply = (payload) => interaction.editReply(payload);
     touchDraft(draft);
 }
@@ -78,6 +151,38 @@ export async function handleLogButton(db, interaction) {
         return true;
     }
     const [, sessionId, action, value] = interaction.customId.split(":");
+    // Recovery actions bypass the normal TTL check — draft may be older than 5 min after a restart
+    if (action === "recover") {
+        const recoveredDraft = sessions.get(sessionId ?? "");
+        if (!recoveredDraft) {
+            await interaction.update({ content: "Recovery draft expired or already used. Run `/log` to start fresh.", embeds: [], components: [] });
+            return true;
+        }
+        if (value === "resume") {
+            recoveredDraft.editReply = (payload) => interaction.editReply(payload);
+            touchDraft(recoveredDraft);
+            await interaction.update(previewPayload(db, recoveredDraft));
+        }
+        else {
+            // "fresh" — discard old draft, start a new one
+            removeDraft(recoveredDraft);
+            const config = db.getGuildConfig(interaction.guild.id);
+            if (!config.interactiveLogEnabled) {
+                await interaction.update({ content: "Interactive logging is disabled. Use `/log action:` instead.", embeds: [], components: [] });
+                return true;
+            }
+            const member = interaction.member;
+            const tier = getStaffTier(db, member);
+            const isHeadMod = tier === "head" || tier === "community" || member.permissions.has(PermissionFlagsBits.Administrator);
+            const newDraft = createDraft(recoveredDraft.guildId, recoveredDraft.userId, recoveredDraft.channelId, isHeadMod);
+            sessions.set(newDraft.id, newDraft);
+            sessionsByUser.set(sessionUserKey(newDraft.guildId, newDraft.userId), newDraft.id);
+            await interaction.update(previewPayload(db, newDraft));
+            newDraft.editReply = (payload) => interaction.editReply(payload);
+            touchDraft(newDraft);
+        }
+        return true;
+    }
     const draft = getDraft(sessionId, interaction);
     if (!draft)
         return true;
@@ -728,8 +833,28 @@ function nextMediaLabel(draft, kind) {
     const count = draft.mediaLinks.filter((link) => link.kind === kind).length + 1;
     return `${prefix} ${count}`;
 }
+function recoveryPromptPayload(draft) {
+    const ageMins = Math.round((Date.now() - draft.updatedAt) / 60_000);
+    const actionLabel = draft.actionDisplayName ?? draft.actionName ?? "Not selected";
+    const embed = new EmbedBuilder()
+        .setTitle("⚠️ Unfinished Log Recovered")
+        .setColor(colors.voidPurple)
+        .setDescription(`The bot restarted while you had a log in progress (${ageMins} minute${ageMins !== 1 ? "s" : ""} ago).\n\n` +
+        `**Action:** ${actionLabel}\n` +
+        `**Stage:** ${draft.stage}\n` +
+        `**Target:** ${draft.targetInfo.robloxUsername ?? draft.targetInfo.discordUsername ?? "Not set"}`);
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder()
+        .setCustomId(`log:${draft.id}:recover:resume`)
+        .setLabel("Resume Log")
+        .setStyle(ButtonStyle.Primary), new ButtonBuilder()
+        .setCustomId(`log:${draft.id}:recover:fresh`)
+        .setLabel("Start Fresh")
+        .setStyle(ButtonStyle.Secondary));
+    return { content: "", embeds: [embed], components: [row] };
+}
 function touchDraft(draft) {
     draft.updatedAt = Date.now();
+    saveDraftToDisk(draft);
     if (draft.timeout)
         clearTimeout(draft.timeout);
     draft.timeout = setTimeout(() => {
@@ -758,6 +883,7 @@ function removeDraft(draft) {
     const key = sessionUserKey(draft.guildId, draft.userId);
     if (sessionsByUser.get(key) === draft.id)
         sessionsByUser.delete(key);
+    deleteDraftFromDisk(draft.guildId, draft.userId);
 }
 function sessionUserKey(guildId, userId) {
     return `${guildId}:${userId}`;
