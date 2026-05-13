@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ActionPreset, CaseMediaLink, GuildConfig, ModerationCase, PendingTicketLog } from "./types.js";
+import type { ActionPreset, CaseMediaLink, GuildConfig, ModerationCase, PendingTicketLog, RobloxGame } from "./types.js";
 import { nowIso } from "./utils/time.js";
 
 type DbValue = string | number | bigint | null;
@@ -33,6 +33,7 @@ export class AppDatabase {
     this.sqlite = new DatabaseSync(filePath);
     this.sqlite.exec("PRAGMA foreign_keys = ON;");
     this.sqlite.exec("PRAGMA journal_mode = WAL;");
+    this.sqlite.exec("PRAGMA busy_timeout = 5000;");
     this.migrate();
   }
 
@@ -188,6 +189,58 @@ export class AppDatabase {
       "SELECT * FROM scheduled_unbans WHERE unban_at <= ?",
       nowIso()
     );
+  }
+
+  addWarning(guildId: string, discordTargetId: string, caseId: number | null, reason: string | null, moderatorUserId: string) {
+    this.run(
+      "INSERT INTO warnings (guild_id, discord_target_id, case_id, reason, moderator_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      guildId, discordTargetId, caseId ?? null, reason ?? null, moderatorUserId, nowIso()
+    );
+  }
+
+  countWarnings(guildId: string, discordTargetId: string): number {
+    return this.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM warnings WHERE guild_id = ? AND discord_target_id = ?",
+      guildId, discordTargetId
+    )?.n ?? 0;
+  }
+
+  // ── Roblox Games ─────────────────────────────────────────────────────────
+
+  upsertRobloxGame(guildId: string, universeId: string, apiKey: string, name: string) {
+    const timestamp = nowIso();
+    this.run(
+      `INSERT INTO roblox_games (guild_id, universe_id, api_key, name, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(guild_id, universe_id) DO UPDATE SET
+         api_key = excluded.api_key,
+         name = excluded.name,
+         updated_at = excluded.updated_at`,
+      guildId, universeId, apiKey, name.trim().slice(0, 80), timestamp, timestamp
+    );
+  }
+
+  removeRobloxGame(guildId: string, nameOrUniverseId: string): boolean {
+    const result = this.run(
+      "DELETE FROM roblox_games WHERE guild_id = ? AND (LOWER(name) = LOWER(?) OR universe_id = ?)",
+      guildId, nameOrUniverseId, nameOrUniverseId
+    );
+    return (result.changes ?? 0) > 0;
+  }
+
+  listRobloxGames(guildId: string): RobloxGame[] {
+    return this.all<RobloxGameRow>(
+      "SELECT * FROM roblox_games WHERE guild_id = ? ORDER BY created_at ASC",
+      guildId
+    ).map(mapRobloxGame);
+  }
+
+  getRobloxGame(guildId: string, nameOrUniverseId: string): RobloxGame | undefined {
+    const row = this.get<RobloxGameRow>(
+      "SELECT * FROM roblox_games WHERE guild_id = ? AND (LOWER(name) = LOWER(?) OR universe_id = ?) LIMIT 1",
+      guildId, nameOrUniverseId, nameOrUniverseId
+    );
+    return row ? mapRobloxGame(row) : undefined;
   }
 
   isLinkedCommunityServer(guildId: string): boolean {
@@ -662,11 +715,35 @@ export class AppDatabase {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS warnings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        discord_target_id TEXT NOT NULL,
+        case_id INTEGER,
+        reason TEXT,
+        moderator_user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_cases_guild_created ON moderation_cases (guild_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_cases_mod_created ON moderation_cases (guild_id, moderator_user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_cases_target_created ON moderation_cases (guild_id, target_user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_ledger_mod ON point_ledger (guild_id, moderator_user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_pending_due ON pending_ticket_logs (guild_id, status, due_at);
+      CREATE INDEX IF NOT EXISTS idx_warnings_target ON warnings (guild_id, discord_target_id);
+
+      CREATE TABLE IF NOT EXISTS roblox_games (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        universe_id TEXT NOT NULL,
+        api_key TEXT NOT NULL,
+        name TEXT NOT NULL DEFAULT 'Game',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(guild_id, universe_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_roblox_games_guild ON roblox_games (guild_id);
     `);
 
     this.ensureColumn("guild_configs", "staff_registration_channel_id", "TEXT");
@@ -1074,5 +1151,27 @@ function mapStaffMember(row: StaffMemberRow): StaffMember {
     registeredBy: row.registered_by,
     registeredAt: row.registered_at,
     active: row.active === 1
+  };
+}
+
+type RobloxGameRow = {
+  id: number;
+  guild_id: string;
+  universe_id: string;
+  api_key: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapRobloxGame(row: RobloxGameRow): RobloxGame {
+  return {
+    id: row.id,
+    guildId: row.guild_id,
+    universeId: row.universe_id,
+    apiKey: row.api_key,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }

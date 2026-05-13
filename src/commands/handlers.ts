@@ -47,11 +47,12 @@ import {
   snapshotRoster,
   upsertQuotaStatusMessage
 } from "../services/quota.js";
-import { cancelPendingLogForUser, resolveLogAction, startInteractiveLog } from "../services/logWorkflow.js";
+import { cancelPendingLogForUser, resolveLogAction, startEditLog, startInteractiveLog } from "../services/logWorkflow.js";
 import { replyHelpMenu } from "../services/helpMenu.js";
 import { normalizeTicketType, processOverdueTickets } from "../services/tickets.js";
 import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
+import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, unbanRobloxPlayer } from "../services/roblox.js";
 
 export type CommandContext = {
   db: AppDatabase;
@@ -91,6 +92,9 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         break;
       case "log":
         await handleLog(interaction, context, member);
+        break;
+      case "logedit":
+        await handleLogEdit(interaction, context, member);
         break;
       case "logban":
         await handleQuickLog(interaction, context, member, "ban");
@@ -137,6 +141,18 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
       case "strikes":
         await handleStrikes(interaction, context, member);
         break;
+      case "warnings":
+        await handleWarnings(interaction, context, member);
+        break;
+      case "ingameban":
+        await handleIngameBan(interaction, context, member);
+        break;
+      case "ingameunban":
+        await handleIngameUnban(interaction, context, member);
+        break;
+      case "roblox":
+        await handleRoblox(interaction, context, member);
+        break;
       case "multiplier":
         await handleMultiplier(interaction, context, member);
         break;
@@ -169,6 +185,15 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         break;
       case "export":
         await handleExport(interaction, context, member);
+        break;
+      case "ingameban":
+        await handleIngameBan(interaction, context, member);
+        break;
+      case "ingameunban":
+        await handleIngameUnban(interaction, context, member);
+        break;
+      case "roblox":
+        await handleRoblox(interaction, context, member);
         break;
       default:
         await interaction.reply({ content: "Unknown command.", ephemeral: true });
@@ -325,6 +350,11 @@ async function handleLog(interaction: ChatInputCommandInteraction, { db }: Comma
     throw new Error("Set action_type for Discord logs, like ban, warn, mute, or timeout.");
   }
   await submitTypedLog(interaction, db, member, selected.actionName, actionType ?? selected.displayName);
+}
+
+async function handleLogEdit(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
+  const caseId = interaction.options.getInteger("case_id", true);
+  await startEditLog(interaction, db, member, caseId);
 }
 
 async function handleQuickLog(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember, actionName: string, actionDisplayName?: string | null) {
@@ -706,6 +736,31 @@ async function handleCase(interaction: ChatInputCommandInteraction, { db }: Comm
     );
     const lines = rows.map((row) => `#${row.id} \`${row.action_name}\` ${row.status} - ${truncate(row.reason, 80)} - ${discordTimestamp(row.created_at, "R")}`);
     await interaction.reply({ content: truncate(listOrNone(lines), 1900), ephemeral: true });
+    return;
+  }
+
+  if (subcommand === "review") {
+    await requireMod(db, member);
+    const caseId = interaction.options.getInteger("case_id", true);
+    const record = db.getCase(guild.id, caseId);
+    if (!record) {
+      await interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
+      return;
+    }
+    const config = db.getGuildConfig(guild.id);
+    const embed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
+    if (record.status === "void") {
+      embed.addFields({ name: "⛔ Voided", value: record.voidReason ? `Reason: ${record.voidReason}` : "This case was voided.", inline: false });
+    }
+    if (record.approvalStatus === "pending") {
+      embed.addFields({ name: "⏳ Awaiting CM Approval", value: "This case has not been approved by a Community Manager yet.", inline: false });
+    }
+    if (record.juniorReviewStatus === "pending") {
+      embed.addFields({ name: "⏳ Awaiting Junior Review", value: "This case has not been reviewed by a Senior Moderator yet.", inline: false });
+    }
+    const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+    await interaction.reply({ embeds: [embed], components: linkRows, ephemeral: true });
+    return;
   }
 }
 
@@ -748,6 +803,216 @@ async function handleStrikes(interaction: ChatInputCommandInteraction, { db }: C
   );
   const lines = rows.map((row) => `Case #${row.case_id}: +${row.amount} - ${discordTimestamp(row.created_at, "R")}`);
   await interaction.reply({ content: `<@${target.id}> has ${total} active strikes.\n${truncate(listOrNone(lines), 1700)}`, ephemeral: true });
+}
+
+async function handleWarnings(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
+  await requireMod(db, member);
+  const guild = interaction.guild!;
+  const target = interaction.options.getUser("target", true);
+
+  const count = db.countWarnings(guild.id, target.id);
+  if (count === 0) {
+    await interaction.reply({ content: `<@${target.id}> has no warnings on record.`, ephemeral: true });
+    return;
+  }
+
+  const rows = db.all<{ id: number; case_id: number | null; reason: string | null; moderator_user_id: string; created_at: string }>(
+    "SELECT id, case_id, reason, moderator_user_id, created_at FROM warnings WHERE guild_id = ? AND discord_target_id = ? ORDER BY id DESC LIMIT 10",
+    guild.id,
+    target.id
+  );
+
+  const lines = rows.map((row, index) => {
+    const num = count - index;
+    const caseRef = row.case_id ? ` (Case #${row.case_id})` : "";
+    const reason = row.reason ? truncate(row.reason, 80) : "No reason recorded";
+    return `**Warning #${num}** — ${reason}${caseRef}\n> ${discordTimestamp(row.created_at, "R")} by <@${row.moderator_user_id}>`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle(`⚠️ Warning History — ${count} warning${count !== 1 ? "s" : ""}`)
+    .setColor(0xf39c12)
+    .setDescription(truncate(lines.join("\n"), 4000))
+    .setFooter({ text: `Discord ID: ${target.id}` })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed], ephemeral: true, allowedMentions: { parse: [] } });
+}
+
+// ── Roblox In-Game Ban/Unban ──────────────────────────────────────────────────
+
+/** Resolve which game to use: auto-selects if only one is configured. */
+function resolveRobloxGame(db: AppDatabase, guildId: string, nameOption: string | null) {
+  const games = db.listRobloxGames(guildId);
+  if (games.length === 0) {
+    throw new Error("No Roblox games configured. Ask an admin to run `/roblox add` first.");
+  }
+  if (nameOption) {
+    const game = db.getRobloxGame(guildId, nameOption);
+    if (!game) throw new Error(`No Roblox game found named "${nameOption}". Use \`/roblox list\` to see configured games.`);
+    return game;
+  }
+  if (games.length === 1) return games[0];
+  const names = games.map((g) => `\`${g.name}\``).join(", ");
+  throw new Error(`Multiple games configured (${names}). Specify which one with the \`game\` option.`);
+}
+
+async function handleIngameBan(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
+  await requireMod(db, member);
+  const guild = interaction.guild!;
+  const robloxUsername = interaction.options.getString("roblox_user", true).trim();
+  const reason = interaction.options.getString("reason", true).trim();
+  const durationRaw = interaction.options.getString("duration");
+  const gameOption = interaction.options.getString("game");
+  const excludeAlts = interaction.options.getBoolean("exclude_alts") ?? false;
+
+  const game = resolveRobloxGame(db, guild.id, gameOption);
+
+  const durationSeconds = parseRobloxDuration(durationRaw);
+  if (durationSeconds === null) {
+    await interaction.reply({ content: `Could not parse duration \`${durationRaw}\`. Examples: \`7 days\`, \`24h\`, \`permanent\`.`, ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  // Look up the Roblox user ID
+  const robloxUser = await lookupRobloxUser(robloxUsername);
+  if (!robloxUser) {
+    await interaction.editReply(`❌ Roblox user \`${robloxUsername}\` not found. Check the spelling and try again.`);
+    return;
+  }
+
+  // Execute the ban via Open Cloud API
+  const banResult = await banRobloxPlayer({
+    universeId: game.universeId,
+    apiKey: game.apiKey,
+    robloxUserId: robloxUser.id,
+    displayReason: reason,
+    privateReason: `[Staff: ${member.user.tag}] ${reason}`,
+    durationSeconds: durationSeconds ?? undefined,
+    excludeAltAccounts: excludeAlts
+  });
+
+  if (!banResult.success) {
+    await interaction.editReply(`❌ Roblox ban failed: ${banResult.error}\n\nDouble-check the API key permissions and Universe ID in \`/roblox list\`.`);
+    return;
+  }
+
+  // Best-effort real-time kick — boots the player if they are in any live server right now
+  await kickActivePlayer(game.universeId, game.apiKey, robloxUser.id, reason);
+
+  // Create a case log for the ban
+  let caseId: number | null = null;
+  try {
+    const durationLabel = formatRobloxDuration(durationSeconds ?? undefined);
+    const record = await createCase(db, {
+      guild,
+      moderator: member,
+      actionName: "ban",
+      actionDisplayName: "Ingame Ban",
+      targetInfo: { robloxUsername: robloxUser.name, robloxId: String(robloxUser.id) },
+      reason,
+      punishmentLength: durationRaw ?? "permanent"
+    });
+    caseId = record.id;
+  } catch {
+    // Case creation failure doesn't undo the ban; just note it
+  }
+
+  const durationLabel = formatRobloxDuration(durationSeconds ?? undefined);
+  const caseNote = caseId !== null ? ` Case #${caseId} logged.` : " (Case log failed — ban was still executed.)";
+  await interaction.editReply(
+    `✅ **${robloxUser.name}** (ID: ${robloxUser.id}) banned from **${game.name}**.\n` +
+    `**Duration:** ${durationLabel}\n**Reason:** ${reason}${caseNote}`
+  );
+}
+
+async function handleIngameUnban(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
+  if (!canUseAccess(db, member, "head")) throw new Error(commandDeniedMessage("head"));
+  const guild = interaction.guild!;
+  const robloxUsername = interaction.options.getString("roblox_user", true).trim();
+  const gameOption = interaction.options.getString("game");
+
+  const game = resolveRobloxGame(db, guild.id, gameOption);
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const robloxUser = await lookupRobloxUser(robloxUsername);
+  if (!robloxUser) {
+    await interaction.editReply(`❌ Roblox user \`${robloxUsername}\` not found. Check the spelling and try again.`);
+    return;
+  }
+
+  const result = await unbanRobloxPlayer({
+    universeId: game.universeId,
+    apiKey: game.apiKey,
+    robloxUserId: robloxUser.id
+  });
+
+  if (!result.success) {
+    await interaction.editReply(`❌ Roblox unban failed: ${result.error}`);
+    return;
+  }
+
+  await writeAuditAndPost(db, guild, interaction.user.id, "roblox.unban", {
+    robloxUserId: robloxUser.id, robloxUsername: robloxUser.name, universeId: game.universeId, gameName: game.name
+  });
+  await interaction.editReply(`✅ **${robloxUser.name}** (ID: ${robloxUser.id}) unbanned from **${game.name}**.`);
+}
+
+async function handleRoblox(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
+  if (!canUseAccess(db, member, "head")) throw new Error(commandDeniedMessage("head"));
+  const guild = interaction.guild!;
+  const subcommand = interaction.options.getSubcommand();
+
+  if (subcommand === "add") {
+    const universeId = interaction.options.getString("universe_id", true).trim();
+    const apiKey = interaction.options.getString("api_key", true).trim();
+    const name = interaction.options.getString("name", true).trim();
+
+    if (!/^\d+$/.test(universeId)) {
+      await interaction.reply({ content: "Universe ID must be a number. Find it in the Creator Hub URL for your experience.", ephemeral: true });
+      return;
+    }
+
+    db.upsertRobloxGame(guild.id, universeId, apiKey, name);
+    await writeAuditAndPost(db, guild, interaction.user.id, "roblox.game.added", { universeId, name });
+    await interaction.reply({
+      content: `✅ Saved Roblox game **${name}** (Universe: \`${universeId}\`).\nUse \`/ingameban\` to test it — if you get an API error, check your API key permissions.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  if (subcommand === "remove") {
+    const nameOrId = interaction.options.getString("name", true).trim();
+    const removed = db.removeRobloxGame(guild.id, nameOrId);
+    if (!removed) {
+      await interaction.reply({ content: `No game found named or with ID \`${nameOrId}\`. Use \`/roblox list\` to see what's configured.`, ephemeral: true });
+      return;
+    }
+    await writeAuditAndPost(db, guild, interaction.user.id, "roblox.game.removed", { nameOrId });
+    await interaction.reply({ content: `Removed Roblox game \`${nameOrId}\`.`, ephemeral: true });
+    return;
+  }
+
+  // list
+  const games = db.listRobloxGames(guild.id);
+  if (games.length === 0) {
+    await interaction.reply({ content: "No Roblox games configured. Use `/roblox add` to add one.", ephemeral: true });
+    return;
+  }
+  const lines = games.map((g) =>
+    `**${g.name}** — Universe \`${g.universeId}\` — Key: \`${g.apiKey.slice(0, 6)}…${g.apiKey.slice(-4)}\``
+  );
+  const embed = new EmbedBuilder()
+    .setTitle("Configured Roblox Games")
+    .setColor(0xe00000)
+    .setDescription(lines.join("\n"))
+    .setFooter({ text: "API key shown truncated. Use /roblox add to update." })
+    .setTimestamp();
+  await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
 async function handleMultiplier(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
@@ -1473,7 +1738,8 @@ async function handleConfigCheck(interaction: ChatInputCommandInteraction, db: A
     ch(config.ticketTranscriptChannelId, "Ticket Transcripts", true),
     ch(config.evidenceArchiveChannelId, "Evidence Archive", true),
     ch(config.approvalChannelId, "CM Approval", true),
-    ch(config.juniorHelpChannelId, "Junior Help", true)
+    ch(config.juniorHelpChannelId, "Junior Help", true),
+    ch(config.stewardLogChannelId, "Steward Log", true)
   ];
   const roleLines = [
     ...tierLabels.map(({ key, label }) => {
@@ -1486,6 +1752,8 @@ async function handleConfigCheck(interaction: ChatInputCommandInteraction, db: A
   ];
   const otherLines = [
     user(config.ownerUserId, "Owner DM"),
+    bool(config.interactiveLogEnabled, "Interactive Log Enabled"),
+    bool(config.approvalEnabled, "CM Approval Enabled"),
     bool(config.pointsEnabled, "Point System Enabled"),
     bool(config.quotaEnabled, "Quota Enabled"),
     bool(Boolean(config.quotaPeriodStart && config.quotaPeriodEnd), "Quota Period Active"),

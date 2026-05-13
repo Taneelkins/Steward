@@ -127,7 +127,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     if (!interaction.isChatInputCommand())
         return;
-    await handleChatInputCommand(interaction, { db, env });
+    await handleChatInputCommand(interaction, { db, env }).catch(async (error) => {
+        const message = error instanceof Error ? error.message : "Something went wrong.";
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply(`Error: ${message}`).catch(() => null);
+        }
+        else {
+            await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+        }
+    });
 });
 client.on(Events.MessageCreate, async (message) => {
     await handleLogMediaMessage(db, message).catch((error) => {
@@ -139,6 +147,11 @@ client.on(Events.MessageCreate, async (message) => {
 });
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+process.on("exit", (code) => console.log(`[exit] Process exiting with code ${code}`));
+process.on("uncaughtException", (err) => console.error("[uncaughtException]", err));
+process.on("unhandledRejection", (reason) => console.error("[unhandledRejection]", reason));
+client.on("error", (err) => console.error("[client error]", err));
+client.on("shardDisconnect", (event, id) => console.log(`[shardDisconnect] shard ${id} close code ${event.code}`));
 function shutdown() {
     console.log("Shutting down...");
     client.destroy();

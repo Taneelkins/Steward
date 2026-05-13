@@ -62,6 +62,7 @@ export function buildCommands(options: CommandBuildOptions = {}) {
       .setDefaultMemberPermissions(registerDefault),
 
     logCommand(),
+    logEditCommand(),
     configCommand(),
     modshopCommand(),
     actionCommand(pointsEnabled),
@@ -73,8 +74,33 @@ export function buildCommands(options: CommandBuildOptions = {}) {
       .setDescription("View strike records.")
       .addUserOption((option) => option.setName("target").setDescription("Member.").setRequired(true)),
 
+    new SlashCommandBuilder()
+      .setName("warnings")
+      .setDescription("View the warning history for a Discord user.")
+      .addUserOption((option) => option.setName("target").setDescription("Discord user to look up.").setRequired(true))
+      .setDefaultMemberPermissions(normalDefault),
+
     quotaCommand(pointsEnabled),
     ticketlogCommand(),
+
+    new SlashCommandBuilder()
+      .setName("ingameban")
+      .setDescription("Ban a player from the configured Roblox experience and create a case log.")
+      .addStringOption((option) => option.setName("roblox_user").setDescription("Roblox username to ban.").setRequired(true))
+      .addStringOption((option) => option.setName("reason").setDescription("Reason for the ban.").setRequired(true))
+      .addStringOption((option) => option.setName("duration").setDescription("Ban duration, e.g. 7 days, 24h, permanent. Defaults to permanent."))
+      .addStringOption((option) => option.setName("game").setDescription("Game name as set in /roblox list (required if multiple games configured)."))
+      .addBooleanOption((option) => option.setName("exclude_alts").setDescription("Also restrict known alt accounts. Default: false."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("ingameunban")
+      .setDescription("Unban a player from the configured Roblox experience.")
+      .addStringOption((option) => option.setName("roblox_user").setDescription("Roblox username to unban.").setRequired(true))
+      .addStringOption((option) => option.setName("game").setDescription("Game name as set in /roblox list (required if multiple games configured)."))
+      .setDefaultMemberPermissions(headDefault),
+
+    robloxCommand(),
 
     new SlashCommandBuilder()
       .setName("lookup")
@@ -284,6 +310,12 @@ function caseCommand(pointsEnabled: boolean) {
         .addIntegerOption((option) => option.setName("case_id").setDescription("Case ID.").setRequired(true))
         .addStringOption((option) => option.setName("reason").setDescription("Why this case is voided.").setRequired(true))
     )
+    .addSubcommand((sub) =>
+      sub
+        .setName("review")
+        .setDescription("Look up a case by its ID and view full details.")
+        .addIntegerOption((option) => option.setName("case_id").setDescription("Case ID to look up.").setRequired(true))
+    )
     .addSubcommandGroup((group) =>
       group
         .setName("history")
@@ -452,6 +484,15 @@ function exportCommand(pointsEnabled: boolean) {
     .setDefaultMemberPermissions(communityDefault);
 }
 
+function logEditCommand() {
+  return new SlashCommandBuilder()
+    .setName("logedit")
+    .setDescription("Edit a previously submitted log using the interactive logger.")
+    .addIntegerOption((option) =>
+      option.setName("case_id").setDescription("The case number to edit (shown on the original log embed).").setRequired(true)
+    );
+}
+
 function logCommand() {
   return new SlashCommandBuilder()
     .setName("log")
@@ -485,6 +526,28 @@ function logCommand() {
     .addStringOption((option) => option.setName("appeal_type").setDescription("Appeal type for appeal logs: ban-appeal, timeout-appeal, warn-appeal, mute-appeal, ingame-appeal."))
     .addStringOption((option) => option.setName("appeal_result").setDescription("Result for appeal logs: accepted or denied."))
     .addStringOption((option) => option.setName("punishment_length").setDescription("Punishment length for Discord logs, e.g. 7 days."));
+}
+
+function robloxCommand() {
+  return new SlashCommandBuilder()
+    .setName("roblox")
+    .setDescription("Manage Roblox game configurations for in-game bans.")
+    .addSubcommand((sub) =>
+      sub
+        .setName("add")
+        .setDescription("Add or update a Roblox game for in-game ban enforcement.")
+        .addStringOption((option) => option.setName("universe_id").setDescription("Roblox Universe ID (from Creator Hub URL).").setRequired(true))
+        .addStringOption((option) => option.setName("api_key").setDescription("Roblox Open Cloud API key with Manage Users permission.").setRequired(true))
+        .addStringOption((option) => option.setName("name").setDescription("Friendly name, e.g. My Game. Used in /ingameban game: option.").setRequired(true))
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("remove")
+        .setDescription("Remove a configured Roblox game.")
+        .addStringOption((option) => option.setName("name").setDescription("Game name or Universe ID.").setRequired(true))
+    )
+    .addSubcommand((sub) => sub.setName("list").setDescription("List configured Roblox games for this server."))
+    .setDefaultMemberPermissions(headDefault);
 }
 
 function textChannelOption(option: SlashCommandChannelOption, name: string, description: string) {

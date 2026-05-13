@@ -44,14 +44,17 @@ export type CaseFlags = {
 const FAST_POINTS_WINDOW_MINUTES = 15;
 const FAST_POINTS_THRESHOLD_MILLI = 10000;
 
-export function buildCaseLogEmbed(record: ModerationCase, options: { showPoints?: boolean } = {}) {
+export function buildCaseLogEmbed(record: ModerationCase, options: { showPoints?: boolean; warningNumber?: number; punishmentExecuted?: boolean } = {}) {
   const showPoints = options.showPoints ?? true;
+  const { warningNumber, punishmentExecuted } = options;
+  const isWarnLog = ((record.actionDisplayName ?? record.actionName).toLowerCase().includes("warn") && record.actionName === "discord");
   const appealStatus = record.appealResult === "accepted" ? "Appeal Approved" : record.appealResult === "denied" ? "Appeal Denied" : null;
   const information = [
     `Reason: ${record.reason}`,
     `Evidence: ${record.evidence ?? "None"}`,
     `Notes: ${record.notes ?? "None"}`,
-    `Strikes: ${record.strikes}`,
+    // Warn logs track warnings separately — don't show misleading "Strikes: 0"
+    isWarnLog ? null : `Strikes: ${record.strikes}`,
     `Case ID: ${record.id}`,
     record.punishmentLength ? `Punishment Length: ${record.punishmentLength}` : null,
     record.transcriptUrl ? `Transcript: ${transcriptFieldValue(record.transcriptUrl)}` : null,
@@ -69,7 +72,15 @@ export function buildCaseLogEmbed(record: ModerationCase, options: { showPoints?
           { name: "Amount of Points Granted", value: formatPoints(record.awardedPointsMilli), inline: true }
         ]
       : []),
-    { name: "Moderator", value: `<@${record.moderatorUserId}>\n${truncate(record.moderatorUsername, 120)}`, inline: false }
+    { name: "Moderator", value: `<@${record.moderatorUserId}>\n${truncate(record.moderatorUsername, 120)}`, inline: false },
+    // Warn confirmation — added when Execute Punishment is clicked (warningNumber is passed in)
+    ...(isWarnLog && warningNumber !== undefined
+      ? [{ name: "⚠️ Warning Issued", value: `Warning **#${warningNumber}** issued and user DM'd.`, inline: false }]
+      : []),
+    // Punishment executed stamp — added after ban/kick/timeout is carried out
+    ...(!isWarnLog && punishmentExecuted
+      ? [{ name: "⚡ Punishment Executed", value: "**Punishment Executed**", inline: false }]
+      : [])
   ];
 
   return new EmbedBuilder()
@@ -336,6 +347,21 @@ export async function createCase(db: AppDatabase, input: CreateCaseInput) {
     await postJuniorReviewRequest(db, input.guild, record, juniorEscalation);
   } else {
     const embed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
+
+    // Show upcoming warning number on Discord Warn logs so mods know what number this will be
+    const isWarnLog = (actionDisplayName ?? actionName).toLowerCase().includes("warn") && actionName === "discord";
+    if (isWarnLog && record.discordId) {
+      const prevWarns = db.countWarnings(guildId, record.discordId);
+      const upcomingNumber = prevWarns + 1;
+      embed.addFields({
+        name: "⚠️ Warning",
+        value: prevWarns === 0
+          ? `This will be **Warning #${upcomingNumber}** — no prior warnings on record. Press **Execute Punishment** to issue it.`
+          : `**${prevWarns}** prior warning(s) on record. This will be **Warning #${upcomingNumber}**. Press **Execute Punishment** to issue it.`,
+        inline: false
+      });
+    }
+
     if (juniorEscalation) {
       embed.addFields({
         name: "Staff Review Required",
@@ -765,6 +791,12 @@ function buildJuniorReviewEmbed(
     { name: "Status", value: statusText, inline: true },
     { name: "Junior Moderator", value: `<@${record.moderatorUserId}>`, inline: true },
     { name: "Action", value: record.actionDisplayName ?? record.actionName, inline: true },
+    ...(record.actionName === "appeal" && record.appealType
+      ? [{ name: "Appeal Type", value: record.appealType, inline: true }]
+      : []),
+    ...(record.actionName === "appeal" && record.appealResult
+      ? [{ name: "Appeal Result", value: record.appealResult === "accepted" ? "✅ Accepted" : "❌ Denied", inline: true }]
+      : []),
     { name: "Target", value: truncate(formatCaseTarget(record), 1000), inline: false },
     { name: "Information", value: truncate(information.join("\n"), 1000), inline: false }
   ];
@@ -1035,6 +1067,8 @@ export function buildExecutePunishmentButton(record: ModerationCase, config: { l
   if (!config.linkedGuildId) return null;
   if (!extractDiscordTargetId(record)) return null;
   const isAppealAccept = record.actionName === "appeal" && record.appealResult === "accepted";
+  const isDiscordAction = record.actionName === "discord" || record.actionName === "discord-ban";
+  if (!isDiscordAction && !isAppealAccept) return null;
   const label = isAppealAccept ? "✅ Reverse Punishment" : "⚡ Execute Punishment";
   const style = isAppealAccept ? ButtonStyle.Success : ButtonStyle.Danger;
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -1147,7 +1181,49 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
 
   // ── Standard punishment execution ────────────────────────────────────────
   const punishment = mapCaseToPunishment(record);
-  const actionLabel = punishment.kind === "ban" ? "banned" : punishment.kind === "kick" ? "kicked" : punishment.kind === "timeout" ? "timed out" : "warned";
+
+  // ── Warn: record in DB + DM with warning number ──────────────────────────
+  if (punishment.kind === "warn") {
+    const prevCount = db.countWarnings(interaction.guild!.id, discordTargetId);
+    db.addWarning(interaction.guild!.id, discordTargetId, record.id, record.reason, record.moderatorUserId);
+    const warningNumber = prevCount + 1;
+
+    if (targetUser) {
+      const dm = [
+        `**⚠️ You have received a warning in ${linkedGuild.name}.**`,
+        ``,
+        `**Warning #${warningNumber}**`,
+        `**Reason:** ${record.reason}`,
+        record.evidence ? `**Evidence:** ${record.evidence}` : null,
+        ``,
+        config.moderationInvite ? `To appeal: ${config.moderationInvite}` : null
+      ].filter(Boolean).join("\n");
+      await targetUser.send(dm).catch(() => null);
+    }
+
+    // Update the log channel message to stamp the confirmed warning number on the embed
+    const warnRecord = db.getCase(interaction.guild!.id, record.id);
+    if (warnRecord?.logChannelId && warnRecord.logMessageId) {
+      const logCh = await getTextChannel(interaction.guild!, warnRecord.logChannelId);
+      const logMsg = await logCh?.messages.fetch(warnRecord.logMessageId).catch(() => null);
+      if (logMsg) {
+        const updatedEmbed = buildCaseLogEmbed(warnRecord, { showPoints: config.pointsEnabled, warningNumber });
+        const linkRows = caseLinkComponents(warnRecord.transcriptUrl, warnRecord.mediaLinks);
+        await logMsg.edit({ embeds: [updatedEmbed], components: linkRows }).catch(() => null);
+      }
+    }
+
+    await writeAuditAndPost(db, interaction.guild!, interaction.user.id, "punishment.executed", {
+      caseId: record.id, discordTargetId, linkedGuildId: config.linkedGuildId, action: "warn", success: true
+    });
+    await postStewardLog(db, interaction.guild!, config, record, interaction.user.id, "warn", true);
+
+    const dmNote = targetUser ? " DM sent." : " (Could not DM user — they may have DMs disabled.)";
+    await interaction.editReply(`✅ <@${discordTargetId}> warned (warning **#${warningNumber}**).${dmNote}`);
+    return true;
+  }
+
+  const actionLabel = punishment.kind === "ban" ? "banned" : punishment.kind === "kick" ? "kicked" : "timed out";
 
   // Check if the user is already punished
   if (punishment.kind === "ban") {
@@ -1168,7 +1244,7 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
   // DM before banning so the message can reach them
   if (targetUser) {
     const dmLines = [
-      `**You have been ${actionLabel}${punishment.kind !== "warn" ? ` in ${linkedGuild.name}` : ""}.** `,
+      `**You have been ${actionLabel} in ${linkedGuild.name}.**`,
       ``,
       `**Moderator:** ${record.moderatorUsername} (${record.moderatorUserId})`,
       `**Reason:** ${record.reason}`,
@@ -1237,6 +1313,18 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
       }
     }
 
+    // Edit the log channel message to stamp "Punishment Executed" on the embed
+    const execRecord = db.getCase(interaction.guild!.id, record.id);
+    if (execRecord?.logChannelId && execRecord.logMessageId) {
+      const execLogCh = await getTextChannel(interaction.guild!, execRecord.logChannelId);
+      const execLogMsg = await execLogCh?.messages.fetch(execRecord.logMessageId).catch(() => null);
+      if (execLogMsg) {
+        const executedEmbed = buildCaseLogEmbed(execRecord, { showPoints: config.pointsEnabled, punishmentExecuted: true });
+        const linkRows = caseLinkComponents(execRecord.transcriptUrl, execRecord.mediaLinks);
+        await execLogMsg.edit({ embeds: [executedEmbed], components: linkRows }).catch(() => null);
+      }
+    }
+
     // Post to steward log
     await postStewardLog(db, interaction.guild!, config, record, interaction.user.id, punishment.kind, success);
 
@@ -1260,15 +1348,33 @@ async function postStewardLog(
 ) {
   if (!config.stewardLogChannelId) return;
   const reloadedRecord = db.getCase(guild.id, record.id) ?? record;
-  const caseUrl = reloadedRecord.logChannelId && reloadedRecord.logMessageId
+
+  // Build a direct message link if we have both channel and message IDs.
+  // Fall back to a channel-level link if only the channel ID is known (e.g. older cases
+  // created before log_channel_id/log_message_id tracking was added, or cases whose
+  // channel couldn't be determined at creation time).
+  const msgUrl = reloadedRecord.logChannelId && reloadedRecord.logMessageId
     ? `https://discord.com/channels/${guild.id}/${reloadedRecord.logChannelId}/${reloadedRecord.logMessageId}`
     : null;
+  const fallbackChannelId = reloadedRecord.logChannelId
+    ?? db.getActionLogChannelId(guild.id, reloadedRecord.actionName)
+    ?? config.actionLogChannelId;
+  const channelUrl = !msgUrl && fallbackChannelId
+    ? `https://discord.com/channels/${guild.id}/${fallbackChannelId}`
+    : null;
+
+  const caseLink = msgUrl
+    ? `**Log:** [Case #${record.id}](${msgUrl})`
+    : channelUrl
+      ? `**Log:** [Case #${record.id}](${channelUrl})`
+      : `**Case:** #${record.id}`;
+
   const lines = [
     `**Action:** ${actionKind.charAt(0).toUpperCase() + actionKind.slice(1)}${success ? "" : " ❌ (failed)"}`,
     `**Moderator:** <@${executorUserId}>`,
     `**Target:** ${reloadedRecord.discordId ? `<@${reloadedRecord.discordId}>` : reloadedRecord.targetUsername}`,
     `**When:** <t:${Math.floor(Date.now() / 1000)}:f>`,
-    caseUrl ? `**Log:** [Case #${record.id}](${caseUrl})` : `**Case:** #${record.id}`
+    caseLink
   ].join("\n");
   await postToConfiguredChannel(guild, config.stewardLogChannelId, { content: lines, allowedMentions: { parse: [] } });
 }

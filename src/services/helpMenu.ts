@@ -54,8 +54,28 @@ const helpCommands: HelpCommand[] = [
       "First screen only shows log type buttons. After choosing a type, use Next to open fields or Cancel to stop.",
       "Red field buttons are required and still missing. Green means submit/success/completed required fields. Blue opens an editing action. Grey is optional navigation/details/back. Red Cancel stops the draft.",
       "Back returns to the log type picker. Submit creates the case. Inactive drafts expire after 5 minutes, and starting another command cancels the old draft.",
-      "Attach Media turns on evidence capture; send image/video/file evidence in the same channel before Submit. Final logs show media as clickable buttons.",
+      "Attach Media turns on evidence capture; send image/video/file evidence in the same channel before Submit. Attachments are archived immediately as you upload them — you will see Archiving N/N progress in the preview.",
+      "Non Ticket Action toggle appears on Discord logs. Enable it if the action didn't come from a ticket so a transcript link isn't required.",
+      "Discord Warn logs show a Warning History field with how many prior warnings that target has on record. Use Execute Punishment to deliver the warning — the bot DMs them their warning number and reason.",
+      "Ingame flow: choose Exploiter (straight to proof → ban log) or Rule Break → Approved/Denied → Ban result → logs with colour.",
       "Junior Mod logs go to the junior help channel for review instead of the log channel directly. A mod must approve or deny. On deny, the junior mod is DM'd with the reason and can run /log to edit and resubmit."
+    ]
+  },
+  {
+    id: "logedit",
+    label: "/logedit",
+    access: "public",
+    levels: ["junior", "moderator", "senior", "admin"],
+    what: "Edit a previously submitted case log using the interactive logger without affecting quota or points.",
+    who: "All staff. Mods can only edit their own cases; admins can edit any case.",
+    usage: ["`/logedit case_id:42`"],
+    examples: ["`/logedit case_id:42`"],
+    notes: [
+      "Opens the interactive logger pre-filled with all existing case details — edit what you need, then Submit.",
+      "Editing does not create a new quota entry or change points. It updates the existing case in-place.",
+      "Target info (Discord ID, Roblox username, etc.) is fully rewritten on save, so Execute Punishment will use the corrected person.",
+      "If the case has a Discord Execute Punishment button, it reappears after editing with the updated target.",
+      "Admins can edit any case. Mods can only edit their own."
     ]
   },
   {
@@ -127,6 +147,53 @@ const helpCommands: HelpCommand[] = [
     requiresPoints: true
   },
   {
+    id: "ingameban",
+    label: "/ingameban",
+    access: "normal",
+    levels: ["moderator", "senior", "admin"],
+    what: "Bans a player from the configured Roblox experience via the Open Cloud API and creates a case log automatically.",
+    who: "Moderator and above.",
+    usage: ["`/ingameban roblox_user:<username> reason:<reason>`", "`/ingameban roblox_user:<username> reason:<reason> duration:7 days game:MyGame`"],
+    examples: ["`/ingameban roblox_user:PlayerXYZ reason:Exploiting`", "`/ingameban roblox_user:Player reason:Harassing others duration:3 days`"],
+    notes: [
+      "Duration defaults to permanent if omitted. Accepts natural language: `7 days`, `24h`, `permanent`.",
+      "If only one game is configured, `game` is optional. If multiple games are set up, you must specify which one.",
+      "The ban is executed immediately via the Roblox Open Cloud API — the player cannot join until the ban expires or is removed with `/ingameunban`.",
+      "A case log is created automatically in the ingame log channel. No need to run /log separately.",
+      "`exclude_alts:true` also restricts known Roblox alt accounts.",
+      "An admin must first run `/roblox add` to configure the game before bans will work."
+    ]
+  },
+  {
+    id: "ingameunban",
+    label: "/ingameunban",
+    access: "head",
+    levels: ["admin"],
+    what: "Removes an active Roblox ban for a player in the configured experience.",
+    who: "Head Mod and above.",
+    usage: ["`/ingameunban roblox_user:<username>`"],
+    examples: ["`/ingameunban roblox_user:PlayerXYZ`"],
+    notes: ["Unbans are not automatically logged as cases. Check audit for the action."]
+  },
+  {
+    id: "roblox",
+    label: "/roblox",
+    access: "head",
+    levels: ["admin"],
+    what: "Adds, removes, and lists Roblox game configurations used by /ingameban.",
+    who: "Head Mod and above.",
+    usage: ["`/roblox add universe_id:<id> api_key:<key> name:<name>`", "`/roblox remove name:<name>`", "`/roblox list`"],
+    subcommands: ["add, remove, list"],
+    examples: ["`/roblox add universe_id:12345678 api_key:rblx_… name:My Game`", "`/roblox list`"],
+    notes: [
+      "Universe ID — go to create.roblox.com, open your experience, copy the number from the URL.",
+      "API Key — create at create.roblox.com/settings/credentials. Give it **Experience > Manage Users** permission and scope it to your universe.",
+      "Multiple games per server are supported. Specify which game in /ingameban with the `game` option.",
+      "API keys are stored locally in the bot database. Treat the database file as sensitive.",
+      "To update an API key, re-run `/roblox add` with the same universe_id — it will overwrite."
+    ]
+  },
+  {
     id: "lookup",
     label: "/lookup",
     access: "normal",
@@ -146,12 +213,31 @@ const helpCommands: HelpCommand[] = [
     label: "/case",
     access: "normal",
     levels: ["moderator", "senior", "admin"],
-    what: "Legacy/manual case tools and case history.",
-    who: "Moderator and above for history. Edit/void is Head Mod-level.",
-    usage: ["`/case history user target:@user`", "`/case history mod moderator:@user`", "`/case edit ...`", "`/case void ...`"],
-    subcommands: ["log, edit, void, history user, history mod"],
-    examples: ["`/case history mod moderator:@Mod`", "`/case void case_id:12 reason:Duplicate`"],
-    notes: ["Prefer `/log` for new logs. Edits and voids preserve audit history."]
+    what: "Legacy/manual case tools, case lookup by ID, and case history.",
+    who: "Moderator and above for history and review. Edit/void is Head Mod-level.",
+    usage: ["`/case review case_id:42`", "`/case history user target:@user`", "`/case history mod moderator:@user`", "`/case edit ...`", "`/case void ...`"],
+    subcommands: ["log, edit, void, review, history user, history mod"],
+    examples: ["`/case review case_id:42`", "`/case history mod moderator:@Mod`", "`/case void case_id:12 reason:Duplicate`"],
+    notes: [
+      "Prefer `/log` for new logs. Edits and voids preserve audit history.",
+      "`/case review` shows the full case embed — action, target, reason, evidence, status, and any void/approval/review flags.",
+      "Case IDs appear on every log embed footer (Case #N)."
+    ]
+  },
+  {
+    id: "warnings",
+    label: "/warnings",
+    access: "normal",
+    levels: ["moderator", "senior", "admin"],
+    what: "Shows the full warning history for a Discord user — warning number, reason, issuing moderator, and timestamp.",
+    who: "Moderator and above.",
+    usage: ["`/warnings target:@user`"],
+    examples: ["`/warnings target:@User`"],
+    notes: [
+      "Warnings are recorded when Execute Punishment is clicked on a Discord Warn log.",
+      "Shows the 10 most recent warnings with sequential numbering. Total count is shown in the title.",
+      "Use `/lookup` to find cases by Roblox username or other identifiers."
+    ]
   },
   {
     id: "action",
@@ -234,11 +320,19 @@ const helpCommands: HelpCommand[] = [
     usage: ["`/config roles ...`", "`/config channels ...`", "`/config behavior interactive_log:true`"],
     subcommands: [
       "roles: staff_role, can_register_role, community_manager_role, head_mod_role, senior_mod_role, normal_mod_role, junior_mod_role, junior_escalation_role, junior_other_escalation_role",
-      "channels: actions (fallback), alerts, audit, quota, quota_alerts, staff_registration, ticket_transcripts, approval_channel, junior_help, logingame, logstrike, logrestore, logdiscord, logticket, logappeal, evidence_archive",
-      "behavior: interactive_log, points_enabled, quota_enabled"
+      "channels: actions (fallback), alerts, audit, quota, quota_alerts, staff_registration, ticket_transcripts, approval_channel, junior_help, steward_log, logingame, logstrike, logrestore, logdiscord, logticket, logappeal, evidence_archive",
+      "behavior: interactive_log, cm_approval, points_enabled, quota_enabled"
     ],
-    examples: ["`/config channels logingame:#log-ingame logdiscord:#log-discord alerts:#mod-alerts junior_help:#junior-review`", "`/config roles staff_role:@Staff community_manager_role:@CM junior_mod_role:@Junior`"],
-    notes: ["Use `/config` to point the bot at premade roles/channels without rerunning setup.", "Use `/update` for safe repair after bot updates.", "Use `/config check` to see the full status of every configured channel, role, and setting."]
+    examples: ["`/config channels logingame:#log-ingame logdiscord:#log-discord alerts:#mod-alerts junior_help:#junior-review`", "`/config roles staff_role:@Staff community_manager_role:@CM junior_mod_role:@Junior`", "`/config behavior interactive_log:true cm_approval:true`"],
+    notes: [
+      "Use `/config` to point the bot at premade roles/channels without rerunning setup.",
+      "Use `/update` for safe repair after bot updates.",
+      "Use `/config check` to see the full status of every configured channel, role, and setting.",
+      "steward_log is optional — sets the channel where Steward bot action logs are posted.",
+      "cm_approval behavior toggle enables or disables the CM approval flow for cases that require it.",
+      "interactive_log behavior toggle enables or disables the button-based interactive logger (fallback to typed /log fields when off).",
+      "Warn system is automatic — warnings are tracked per Discord user. No extra config needed. Use /log (discord action, warn type) and Execute Punishment to issue and record warnings."
+    ]
   },
   {
     id: "refresh",

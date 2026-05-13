@@ -132,6 +132,16 @@ export type PendingTicketLog = {
   adminNotes: string | null;
 };
 
+export type RobloxGame = {
+  id: number;
+  guildId: string;
+  universeId: string;
+  apiKey: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type QuotaMemberStatus = {
   userId: string;
   requiredLogs: number;
