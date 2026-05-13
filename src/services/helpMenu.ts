@@ -337,7 +337,8 @@ const helpCommands: HelpCommand[] = [
       "steward_log is optional — sets the channel where Steward bot action logs are posted.",
       "cm_approval behavior toggle enables or disables the CM approval flow for cases that require it.",
       "interactive_log behavior toggle enables or disables the button-based interactive logger (fallback to typed /log fields when off).",
-      "Warn system is automatic — warnings are tracked per Discord user. No extra config needed. Use /log (discord action, warn type) and Execute Punishment to issue and record warnings."
+      "Warn system is automatic — warnings are tracked per Discord user. No extra config needed. Use /log (discord action, warn type) and Execute Punishment to issue and record warnings.",
+      "**Roblox game config is NOT done here.** Use `/roblox add universe_id:<id> api_key:<key> name:<name>` to link your game. Each server sets its own game once and all in-game bans from `/log` and `/ingameban` route to it automatically."
     ]
   },
   {
