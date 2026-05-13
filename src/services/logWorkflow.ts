@@ -223,6 +223,10 @@ export async function startInteractiveLog(interaction: ChatInputCommandInteracti
   const existingDraft = existingDraftId ? sessions.get(existingDraftId) : null;
   if (existingDraft && existingDraft.editReply === null) {
     await interaction.reply({ ...recoveryPromptPayload(existingDraft), ephemeral: true });
+    // Give the recovery prompt a TTL — without this the draft lives forever in memory
+    // and every subsequent /log call loops back to this same prompt.
+    existingDraft.editReply = (payload) => interaction.editReply(payload);
+    touchDraft(existingDraft);
     return;
   }
 
@@ -268,7 +272,19 @@ export async function handleLogButton(db: AppDatabase, interaction: ButtonIntera
   if (action === "recover") {
     const recoveredDraft = sessions.get(sessionId ?? "");
     if (!recoveredDraft) {
-      await interaction.update({ content: "Recovery draft expired or already used. Run `/log` to start fresh.", embeds: [], components: [] });
+      // The draft for this specific button is gone (TTL fired or already resumed elsewhere).
+      // Clean up any other stale recovery draft for this user so `/log` doesn't loop back.
+      const guild2 = interaction.guild!;
+      const userId2 = (interaction.member as GuildMember).id;
+      const otherDraftId = sessionsByUser.get(sessionUserKey(guild2.id, userId2));
+      const otherDraft = otherDraftId ? sessions.get(otherDraftId) : null;
+      if (otherDraft && otherDraft.editReply === null) removeDraft(otherDraft);
+      await interaction.update({ content: "That recovery draft expired. Use `/log` to start a new log.", embeds: [], components: [] });
+      return true;
+    }
+    if (value === "dismiss") {
+      removeDraft(recoveredDraft);
+      await interaction.update({ content: "Draft dismissed. Use `/log` to start a new log.", embeds: [], components: [] });
       return true;
     }
     if (value === "resume") {
@@ -1102,7 +1118,8 @@ function recoveryPromptPayload(draft: LogDraft) {
       );
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(`log:${draft.id}:recover:resume`).setLabel("Edit & Resubmit").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh Instead").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh Instead").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`log:${draft.id}:recover:dismiss`).setLabel("Dismiss").setStyle(ButtonStyle.Danger)
     );
     return { content: "", embeds: [embed], components: [row] };
   }
@@ -1119,7 +1136,8 @@ function recoveryPromptPayload(draft: LogDraft) {
     );
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`log:${draft.id}:recover:resume`).setLabel("Resume Log").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`log:${draft.id}:recover:dismiss`).setLabel("Dismiss").setStyle(ButtonStyle.Danger)
   );
   return { content: "", embeds: [embed], components: [row] };
 }
