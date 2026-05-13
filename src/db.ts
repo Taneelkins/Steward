@@ -243,6 +243,24 @@ export class AppDatabase {
     return row ? mapRobloxGame(row) : undefined;
   }
 
+  /** Returns the single configured game, or the one marked default if multiple. Returns undefined if none or ambiguous. */
+  getAutoRobloxGame(guildId: string): RobloxGame | undefined {
+    const games = this.listRobloxGames(guildId);
+    if (games.length === 0) return undefined;
+    if (games.length === 1) return games[0];
+    return games.find((g) => g.isDefault);
+  }
+
+  setDefaultRobloxGame(guildId: string, nameOrUniverseId: string): boolean {
+    const game = this.getRobloxGame(guildId, nameOrUniverseId);
+    if (!game) return false;
+    this.transaction(() => {
+      this.run("UPDATE roblox_games SET is_default = 0 WHERE guild_id = ?", guildId);
+      this.run("UPDATE roblox_games SET is_default = 1 WHERE guild_id = ? AND id = ?", guildId, game.id);
+    });
+    return true;
+  }
+
   isLinkedCommunityServer(guildId: string): boolean {
     return Boolean(this.get("SELECT 1 FROM guild_configs WHERE linked_guild_id = ?", guildId));
   }
@@ -786,6 +804,7 @@ export class AppDatabase {
     this.ensureColumn("staff_roles", "role_key", "TEXT");
     this.ensureColumn("moderation_cases", "log_message_id", "TEXT");
     this.ensureColumn("moderation_cases", "log_channel_id", "TEXT");
+    this.ensureColumn("roblox_games", "is_default", "INTEGER NOT NULL DEFAULT 0");
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
@@ -1160,6 +1179,7 @@ type RobloxGameRow = {
   universe_id: string;
   api_key: string;
   name: string;
+  is_default: number;
   created_at: string;
   updated_at: string;
 };
@@ -1171,6 +1191,7 @@ function mapRobloxGame(row: RobloxGameRow): RobloxGame {
     universeId: row.universe_id,
     apiKey: row.api_key,
     name: row.name,
+    isDefault: Boolean(row.is_default),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

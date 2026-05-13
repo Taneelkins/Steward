@@ -103,8 +103,8 @@ async function callUserRestriction(
   body: unknown
 ): Promise<RobloxApiResult> {
   try {
-    // Open Cloud v2 requires the "users/" resource segment and the updateMask query param
-    const url = `${ROBLOX_CLOUD_API}/universes/${universeId}/user-restrictions/users/${robloxUserId}?updateMask=gameJoinRestriction`;
+    // Open Cloud v2: resource path is /user-restrictions/{userId} — no "users/" segment
+    const url = `${ROBLOX_CLOUD_API}/universes/${universeId}/user-restrictions/${robloxUserId}?updateMask=gameJoinRestriction`;
     const res = await fetch(url, {
         method: "PATCH",
         headers: { "x-api-key": apiKey, "Content-Type": "application/json" },

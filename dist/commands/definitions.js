@@ -431,6 +431,10 @@ function robloxCommand() {
         .setName("remove")
         .setDescription("Remove a configured Roblox game.")
         .addStringOption((option) => option.setName("name").setDescription("Game name or Universe ID.").setRequired(true)))
+        .addSubcommand((sub) => sub
+        .setName("set-default")
+        .setDescription("Set the default game used for automatic ingame ban execution from logs.")
+        .addStringOption((option) => option.setName("name").setDescription("Game name or Universe ID.").setRequired(true)))
         .addSubcommand((sub) => sub.setName("list").setDescription("List configured Roblox games for this server."))
         .setDefaultMemberPermissions(headDefault);
 }

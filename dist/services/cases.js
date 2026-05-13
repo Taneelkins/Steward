@@ -4,11 +4,12 @@ import { caseLinkComponents, getStaffTier, getTextChannel, postToConfiguredChann
 import { colors } from "../utils/theme.js";
 import { nowIso, parseDateInput } from "../utils/time.js";
 import { writeAudit, writeAuditAndPost } from "./audit.js";
+import { banRobloxPlayer, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, unbanRobloxPlayer } from "./roblox.js";
 const FAST_POINTS_WINDOW_MINUTES = 15;
 const FAST_POINTS_THRESHOLD_MILLI = 10000;
 export function buildCaseLogEmbed(record, options = {}) {
     const showPoints = options.showPoints ?? true;
-    const { warningNumber, punishmentExecuted } = options;
+    const { warningNumber, punishmentExecuted, ingameBanExecuted, ingameBanFailed, ingameUnbanExecuted, ingameUnbanFailed } = options;
     const isWarnLog = ((record.actionDisplayName ?? record.actionName).toLowerCase().includes("warn") && record.actionName === "discord");
     const appealStatus = record.appealResult === "accepted" ? "Appeal Approved" : record.appealResult === "denied" ? "Appeal Denied" : null;
     const information = [
@@ -41,7 +42,13 @@ export function buildCaseLogEmbed(record, options = {}) {
         // Punishment executed stamp — added after ban/kick/timeout is carried out
         ...(!isWarnLog && punishmentExecuted
             ? [{ name: "⚡ Punishment Executed", value: "**Punishment Executed**", inline: false }]
-            : [])
+            : []),
+        // Ingame ban auto-execution stamp
+        ...(ingameBanExecuted ? [{ name: "⚡ Ingame Ban Executed", value: "**Player has been banned in-game.**", inline: false }] : []),
+        ...(ingameBanFailed ? [{ name: "⚠️ Ingame Ban Failed", value: ingameBanFailed.slice(0, 1024), inline: false }] : []),
+        // Ingame unban auto-execution stamp
+        ...(ingameUnbanExecuted ? [{ name: "✅ Ingame Ban Reversed", value: "**Player has been unbanned in-game.**", inline: false }] : []),
+        ...(ingameUnbanFailed ? [{ name: "⚠️ Ingame Unban Failed", value: ingameUnbanFailed.slice(0, 1024), inline: false }] : [])
     ];
     return new EmbedBuilder()
         .setTitle(caseEmbedTitle(record))
@@ -256,6 +263,110 @@ export async function createCase(db, input) {
     }
     return record;
 }
+// ── Ingame ban/unban auto-execution ──────────────────────────────────────────
+/** True for cases that represent an in-game ban (action "ban" from the log workflow or /ingameban). */
+export function isIngameBanCase(record) {
+    return record.actionName === "ban" && !record.isNoAction;
+}
+/** True for accepted appeal logs that are for an in-game ban. */
+export function isIngameBanAppealAccepted(record) {
+    return (record.actionName === "appeal" &&
+        record.appealResult === "accepted" &&
+        (record.appealType ?? "").toLowerCase().includes("ingame"));
+}
+async function resolveRobloxUserId(record) {
+    if (record.robloxId) {
+        const parsed = parseInt(record.robloxId, 10);
+        if (!isNaN(parsed))
+            return parsed;
+    }
+    if (record.robloxUsername) {
+        const user = await lookupRobloxUser(record.robloxUsername);
+        return user?.id ?? null;
+    }
+    return null;
+}
+async function stampCaseLog(db, guild, record, extraOptions) {
+    const refreshed = db.getCase(guild.id, record.id) ?? record;
+    if (!refreshed.logChannelId || !refreshed.logMessageId)
+        return;
+    const config = db.getGuildConfig(guild.id);
+    const channel = await getTextChannel(guild, refreshed.logChannelId);
+    const msg = await channel?.messages.fetch(refreshed.logMessageId).catch(() => null);
+    if (!msg)
+        return;
+    const embed = buildCaseLogEmbed(refreshed, { showPoints: config.pointsEnabled, ...extraOptions });
+    const linkRows = caseLinkComponents(refreshed.transcriptUrl, refreshed.mediaLinks);
+    await msg.edit({ embeds: [embed], components: linkRows }).catch(() => null);
+}
+/**
+ * Auto-execute an in-game ban for a case. Fire-and-forget safe — errors are caught internally.
+ * Pass the caseId so we always work off the freshest record (log message IDs populated).
+ */
+export async function autoExecuteIngameBan(db, guild, caseId) {
+    const record = db.getCase(guild.id, caseId);
+    if (!record || !isIngameBanCase(record))
+        return;
+    const game = db.getAutoRobloxGame(guild.id);
+    if (!game) {
+        const games = db.listRobloxGames(guild.id);
+        const msg = games.length === 0
+            ? "No Roblox game configured. Use `/roblox add` to set one up."
+            : `Multiple games configured with no default. Use \`/roblox set-default <name>\` to pick one.`;
+        await stampCaseLog(db, guild, record, { ingameBanFailed: msg }).catch(() => null);
+        return;
+    }
+    const robloxUserId = await resolveRobloxUserId(record);
+    if (!robloxUserId) {
+        await stampCaseLog(db, guild, record, { ingameBanFailed: "No Roblox username or ID on this case — ban not executed." }).catch(() => null);
+        return;
+    }
+    const durationSeconds = parseRobloxDuration(record.punishmentLength) ?? undefined;
+    const result = await banRobloxPlayer({
+        universeId: game.universeId,
+        apiKey: game.apiKey,
+        robloxUserId,
+        displayReason: record.reason.slice(0, 400),
+        privateReason: `Case #${record.id}: ${record.reason}`.slice(0, 400),
+        durationSeconds
+    });
+    if (result.success) {
+        await kickActivePlayer(game.universeId, game.apiKey, robloxUserId, record.reason);
+        await stampCaseLog(db, guild, record, { ingameBanExecuted: true }).catch(() => null);
+    }
+    else {
+        await stampCaseLog(db, guild, record, { ingameBanFailed: result.error }).catch(() => null);
+    }
+}
+/**
+ * Auto-execute an in-game unban for an accepted ingame ban appeal case.
+ */
+export async function autoExecuteIngameUnban(db, guild, caseId) {
+    const record = db.getCase(guild.id, caseId);
+    if (!record || !isIngameBanAppealAccepted(record))
+        return;
+    const game = db.getAutoRobloxGame(guild.id);
+    if (!game) {
+        const games = db.listRobloxGames(guild.id);
+        const msg = games.length === 0
+            ? "No Roblox game configured."
+            : "Multiple games configured with no default. Use `/roblox set-default <name>`.";
+        await stampCaseLog(db, guild, record, { ingameUnbanFailed: msg }).catch(() => null);
+        return;
+    }
+    const robloxUserId = await resolveRobloxUserId(record);
+    if (!robloxUserId) {
+        await stampCaseLog(db, guild, record, { ingameUnbanFailed: "No Roblox username or ID on this case — unban not executed." }).catch(() => null);
+        return;
+    }
+    const result = await unbanRobloxPlayer({ universeId: game.universeId, apiKey: game.apiKey, robloxUserId });
+    if (result.success) {
+        await stampCaseLog(db, guild, record, { ingameUnbanExecuted: true }).catch(() => null);
+    }
+    else {
+        await stampCaseLog(db, guild, record, { ingameUnbanFailed: result.error }).catch(() => null);
+    }
+}
 function targetFromDiscordUser(user) {
     return {
         discordId: user.id,
@@ -468,6 +579,13 @@ export async function handleApprovalButton(db, interaction) {
             components: []
         });
         await updateCaseLogAfterApproval(db, interaction.guild, record, "approved", interaction.user.id);
+        // Auto-execute ingame ban / unban now that the case is approved
+        if (isIngameBanCase(record)) {
+            autoExecuteIngameBan(db, interaction.guild, caseId).catch((err) => console.error("[cases] CM-approval autoExecuteIngameBan:", err));
+        }
+        else if (isIngameBanAppealAccepted(record)) {
+            autoExecuteIngameUnban(db, interaction.guild, caseId).catch((err) => console.error("[cases] CM-approval autoExecuteIngameUnban:", err));
+        }
     }
     else {
         db.run("UPDATE moderation_cases SET approval_status = 'denied', updated_at = ? WHERE guild_id = ? AND id = ?", timestamp, interaction.guild.id, caseId);
@@ -645,6 +763,13 @@ export async function handleJuniorReviewButton(db, interaction) {
             embeds: [buildJuniorReviewEmbed(record, "approved", { reviewerUserId: interaction.user.id })],
             components: []
         });
+        // Auto-execute ingame ban / unban now that the junior log is approved
+        if (isIngameBanCase(record)) {
+            autoExecuteIngameBan(db, interaction.guild, caseId).catch((err) => console.error("[cases] junior-approval autoExecuteIngameBan:", err));
+        }
+        else if (isIngameBanAppealAccepted(record)) {
+            autoExecuteIngameUnban(db, interaction.guild, caseId).catch((err) => console.error("[cases] junior-approval autoExecuteIngameUnban:", err));
+        }
     }
     else {
         const modal = new ModalBuilder()

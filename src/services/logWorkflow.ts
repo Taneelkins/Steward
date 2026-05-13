@@ -18,7 +18,7 @@ import {
 } from "discord.js";
 import type { Attachment, Message, TextChannel } from "discord.js";
 import type { AppDatabase } from "../db.js";
-import { buildCaseLogEmbed, buildExecutePunishmentButton, createCase, effectiveActionPoints, formatLoggedActionName, parsePunishmentLength, resubmitJuniorReviewCase, type CaseTarget } from "./cases.js";
+import { autoExecuteIngameBan, autoExecuteIngameUnban, buildCaseLogEmbed, buildExecutePunishmentButton, createCase, effectiveActionPoints, formatLoggedActionName, isIngameBanAppealAccepted, isIngameBanCase, parsePunishmentLength, resubmitJuniorReviewCase, type CaseTarget } from "./cases.js";
 import type { CaseMediaLink, ModerationCase } from "../types.js";
 import { formatPoints, truncate } from "../utils/format.js";
 import { caseLinkComponents, getTextChannel, isAdminMember } from "../utils/discord.js";
@@ -1100,6 +1100,16 @@ async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draf
     });
 
     removeDraft(draft);
+
+    // Auto-execute ingame ban/unban for cases that don't require approval or junior review
+    if (record.juniorReviewStatus !== "pending" && record.approvalStatus !== "pending") {
+      if (isIngameBanCase(record)) {
+        autoExecuteIngameBan(db, interaction.guild!, record.id).catch((err) => console.error("[logWorkflow] autoExecuteIngameBan:", err));
+      } else if (isIngameBanAppealAccepted(record)) {
+        autoExecuteIngameUnban(db, interaction.guild!, record.id).catch((err) => console.error("[logWorkflow] autoExecuteIngameUnban:", err));
+      }
+    }
+
     const config2 = db.getGuildConfig(draft.guildId);
     const executeRow = buildExecutePunishmentButton(record, config2);
     const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);

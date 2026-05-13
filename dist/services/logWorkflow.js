@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, PermissionFlagsBits, TextInputBuilder, TextInputStyle } from "discord.js";
-import { buildCaseLogEmbed, buildExecutePunishmentButton, createCase, effectiveActionPoints, formatLoggedActionName, resubmitJuniorReviewCase } from "./cases.js";
+import { autoExecuteIngameBan, autoExecuteIngameUnban, buildCaseLogEmbed, buildExecutePunishmentButton, createCase, effectiveActionPoints, formatLoggedActionName, isIngameBanAppealAccepted, isIngameBanCase, resubmitJuniorReviewCase } from "./cases.js";
 import { formatPoints, truncate } from "../utils/format.js";
 import { caseLinkComponents, getTextChannel, isAdminMember } from "../utils/discord.js";
 import { getStaffTier } from "../utils/discord.js";
@@ -167,9 +167,10 @@ export async function startInteractiveLog(interaction, db, member) {
     const existingDraft = existingDraftId ? sessions.get(existingDraftId) : null;
     if (existingDraft && existingDraft.editReply === null) {
         await interaction.reply({ ...recoveryPromptPayload(existingDraft), ephemeral: true });
-        // Bind the command interaction immediately so that if the mod runs /log again
-        // (instead of clicking Resume), cancelPendingLogForUser breaks the loop and starts fresh.
+        // Give the recovery prompt a TTL — without this the draft lives forever in memory
+        // and every subsequent /log call loops back to this same prompt.
         existingDraft.editReply = (payload) => interaction.editReply(payload);
+        touchDraft(existingDraft);
         return;
     }
     await cancelPendingLogForUser(guild.id, member.id, "Previous pending log cancelled because you started a new log.");
@@ -267,7 +268,20 @@ export async function handleLogButton(db, interaction) {
     if (action === "recover") {
         const recoveredDraft = sessions.get(sessionId ?? "");
         if (!recoveredDraft) {
-            await interaction.update({ content: "Recovery draft expired or already used. Run `/log` to start fresh.", embeds: [], components: [] });
+            // The draft for this specific button is gone (TTL fired or already resumed elsewhere).
+            // Clean up any other stale recovery draft for this user so `/log` doesn't loop back.
+            const guild2 = interaction.guild;
+            const userId2 = interaction.member.id;
+            const otherDraftId = sessionsByUser.get(sessionUserKey(guild2.id, userId2));
+            const otherDraft = otherDraftId ? sessions.get(otherDraftId) : null;
+            if (otherDraft && otherDraft.editReply === null)
+                removeDraft(otherDraft);
+            await interaction.update({ content: "That recovery draft expired. Use `/log` to start a new log.", embeds: [], components: [] });
+            return true;
+        }
+        if (value === "dismiss") {
+            removeDraft(recoveredDraft);
+            await interaction.update({ content: "Draft dismissed. Use `/log` to start a new log.", embeds: [], components: [] });
             return true;
         }
         if (value === "resume") {
@@ -901,6 +915,15 @@ async function submitDraft(db, interaction, draft) {
             happenedAt: draft.happenedAt
         });
         removeDraft(draft);
+        // Auto-execute ingame ban/unban for cases that don't require approval or junior review
+        if (record.juniorReviewStatus !== "pending" && record.approvalStatus !== "pending") {
+            if (isIngameBanCase(record)) {
+                autoExecuteIngameBan(db, interaction.guild, record.id).catch((err) => console.error("[logWorkflow] autoExecuteIngameBan:", err));
+            }
+            else if (isIngameBanAppealAccepted(record)) {
+                autoExecuteIngameUnban(db, interaction.guild, record.id).catch((err) => console.error("[logWorkflow] autoExecuteIngameUnban:", err));
+            }
+        }
         const config2 = db.getGuildConfig(draft.guildId);
         const executeRow = buildExecutePunishmentButton(record, config2);
         const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
@@ -1153,7 +1176,7 @@ function recoveryPromptPayload(draft) {
             .setDescription(`Your log (Case #${draft.editCaseId}) was denied. Your previous details are pre-loaded — edit what needs fixing and resubmit.\n\n` +
             `**Action:** ${actionLabel}\n` +
             `**Target:** ${targetLabel}`);
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:recover:resume`).setLabel("Edit & Resubmit").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh Instead").setStyle(ButtonStyle.Secondary));
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:recover:resume`).setLabel("Edit & Resubmit").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh Instead").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`log:${draft.id}:recover:dismiss`).setLabel("Dismiss").setStyle(ButtonStyle.Danger));
         return { content: "", embeds: [embed], components: [row] };
     }
     const ageMins = Math.round((Date.now() - draft.updatedAt) / 60_000);
@@ -1164,7 +1187,7 @@ function recoveryPromptPayload(draft) {
         `**Action:** ${actionLabel}\n` +
         `**Stage:** ${draft.stage}\n` +
         `**Target:** ${targetLabel}`);
-    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:recover:resume`).setLabel("Resume Log").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh").setStyle(ButtonStyle.Secondary));
+    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`log:${draft.id}:recover:resume`).setLabel("Resume Log").setStyle(ButtonStyle.Primary), new ButtonBuilder().setCustomId(`log:${draft.id}:recover:fresh`).setLabel("Start Fresh").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`log:${draft.id}:recover:dismiss`).setLabel("Dismiss").setStyle(ButtonStyle.Danger));
     return { content: "", embeds: [embed], components: [row] };
 }
 function touchDraft(draft) {

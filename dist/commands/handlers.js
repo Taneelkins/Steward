@@ -826,13 +826,24 @@ async function handleRoblox(interaction, { db }, member) {
         await interaction.reply({ content: `Removed Roblox game \`${nameOrId}\`.`, ephemeral: true });
         return;
     }
+    if (subcommand === "set-default") {
+        const nameOrId = interaction.options.getString("name", true).trim();
+        const ok = db.setDefaultRobloxGame(guild.id, nameOrId);
+        if (!ok) {
+            await interaction.reply({ content: `No game found named or with ID \`${nameOrId}\`. Use \`/roblox list\` to see what's configured.`, ephemeral: true });
+            return;
+        }
+        await writeAuditAndPost(db, guild, interaction.user.id, "roblox.game.default_set", { nameOrId });
+        await interaction.reply({ content: `✅ **${nameOrId}** is now the default game for automatic in-game ban execution from logs.`, ephemeral: true });
+        return;
+    }
     // list
     const games = db.listRobloxGames(guild.id);
     if (games.length === 0) {
         await interaction.reply({ content: "No Roblox games configured. Use `/roblox add` to add one.", ephemeral: true });
         return;
     }
-    const lines = games.map((g) => `**${g.name}** — Universe \`${g.universeId}\` — Key: \`${g.apiKey.slice(0, 6)}…${g.apiKey.slice(-4)}\``);
+    const lines = games.map((g) => `${g.isDefault ? "⭐ " : ""}**${g.name}** — Universe \`${g.universeId}\` — Key: \`${g.apiKey.slice(0, 6)}…${g.apiKey.slice(-4)}\``);
     const embed = new EmbedBuilder()
         .setTitle("Configured Roblox Games")
         .setColor(0xe00000)

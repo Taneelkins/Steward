@@ -138,6 +138,7 @@ export type RobloxGame = {
   universeId: string;
   apiKey: string;
   name: string;
+  isDefault: boolean;
   createdAt: string;
   updatedAt: string;
 };

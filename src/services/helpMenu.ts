@@ -161,7 +161,9 @@ const helpCommands: HelpCommand[] = [
       "The ban is executed immediately via the Roblox Open Cloud API — the player cannot join until the ban expires or is removed with `/ingameunban`.",
       "A case log is created automatically in the ingame log channel. No need to run /log separately.",
       "`exclude_alts:true` also restricts known Roblox alt accounts.",
-      "An admin must first run `/roblox add` to configure the game before bans will work."
+      "An admin must first run `/roblox add` to configure the game before bans will work.",
+      "**Auto-ban from `/log`:** Logging an Ingame action via `/log` will also auto-execute the Roblox ban if the target's Roblox username/ID is filled in. Normal/head mods ban immediately; junior mod bans execute after senior review approval.",
+      "**Auto-unban from `/log`:** Logging an accepted Ingame Ban appeal via `/log` will auto-unban the player in-game."
     ]
   },
   {
@@ -169,26 +171,30 @@ const helpCommands: HelpCommand[] = [
     label: "/ingameunban",
     access: "head",
     levels: ["admin"],
-    what: "Removes an active Roblox ban for a player in the configured experience.",
+    what: "Manually removes an active Roblox ban for a player in the configured experience.",
     who: "Head Mod and above.",
     usage: ["`/ingameunban roblox_user:<username>`"],
     examples: ["`/ingameunban roblox_user:PlayerXYZ`"],
-    notes: ["Unbans are not automatically logged as cases. Check audit for the action."]
+    notes: [
+      "Unbans via this command are not automatically logged as cases — check audit for the action.",
+      "For appeal-based unbans, log the appeal via `/log` with result: Accepted and type: Ingame Ban — the unban executes automatically."
+    ]
   },
   {
     id: "roblox",
     label: "/roblox",
     access: "head",
     levels: ["admin"],
-    what: "Adds, removes, and lists Roblox game configurations used by /ingameban.",
+    what: "Manages Roblox game configurations used for in-game ban enforcement from `/ingameban` and the `/log` workflow.",
     who: "Head Mod and above.",
-    usage: ["`/roblox add universe_id:<id> api_key:<key> name:<name>`", "`/roblox remove name:<name>`", "`/roblox list`"],
-    subcommands: ["add, remove, list"],
-    examples: ["`/roblox add universe_id:12345678 api_key:rblx_… name:My Game`", "`/roblox list`"],
+    usage: ["`/roblox add universe_id:<id> api_key:<key> name:<name>`", "`/roblox remove name:<name>`", "`/roblox set-default name:<name>`", "`/roblox list`"],
+    subcommands: ["add, remove, set-default, list"],
+    examples: ["`/roblox add universe_id:12345678 api_key:rblx_… name:My Game`", "`/roblox set-default name:My Game`", "`/roblox list`"],
     notes: [
       "Universe ID — go to create.roblox.com, open your experience, copy the number from the URL.",
-      "API Key — create at create.roblox.com/settings/credentials. Give it **Experience > Manage Users** permission and scope it to your universe.",
-      "Multiple games per server are supported. Specify which game in /ingameban with the `game` option.",
+      "API Key — create at create.roblox.com/settings/credentials. Give it **User Restrictions → Write** and **Messaging Service → Publish** permissions.",
+      "If only one game is configured it is used automatically for all log-based bans.",
+      "If multiple games are configured, use `/roblox set-default` to designate which one is used for auto-execution from logs. `/ingameban` still accepts a `game` option for manual override.",
       "API keys are stored locally in the bot database. Treat the database file as sensitive.",
       "To update an API key, re-run `/roblox add` with the same universe_id — it will overwrite."
     ]
