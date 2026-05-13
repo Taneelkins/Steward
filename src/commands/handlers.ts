@@ -1,14 +1,21 @@
 import { execSync } from "node:child_process";
 import {
+  ActionRowBuilder,
   AttachmentBuilder,
+  ButtonBuilder,
+  ButtonInteraction,
+  ButtonStyle,
   ChannelType,
   ChatInputCommandInteraction,
   EmbedBuilder,
   Guild,
   GuildMember,
   InteractionReplyOptions,
+  ModalBuilder,
   Role,
   TextChannel,
+  TextInputBuilder,
+  TextInputStyle,
   User
 } from "discord.js";
 import type { AppDatabase } from "../db.js";
@@ -963,68 +970,177 @@ async function handleIngameUnban(interaction: ChatInputCommandInteraction, { db 
 
 async function handleRoblox(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
   if (!canUseAccess(db, member, "head")) throw new Error(commandDeniedMessage("head"));
-  const guild = interaction.guild!;
-  const subcommand = interaction.options.getSubcommand();
+  await interaction.reply({ ...buildRobloxPanel(db, interaction.guild!.id), ephemeral: true });
+}
 
-  if (subcommand === "add") {
-    const universeId = interaction.options.getString("universe_id", true).trim();
-    const apiKey = interaction.options.getString("api_key", true).trim();
-    const name = interaction.options.getString("name", true).trim();
+// ── Roblox panel helpers ─────────────────────────────────────────────────────
 
-    if (!/^\d+$/.test(universeId)) {
-      await interaction.reply({ content: "Universe ID must be a number. Find it in the Creator Hub URL for your experience.", ephemeral: true });
-      return;
-    }
+function buildRobloxPanel(db: AppDatabase, guildId: string): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
+  const games = db.listRobloxGames(guildId);
 
-    db.upsertRobloxGame(guild.id, universeId, apiKey, name);
-    await writeAuditAndPost(db, guild, interaction.user.id, "roblox.game.added", { universeId, name });
-    await interaction.reply({
-      content: `✅ Saved Roblox game **${name}** (Universe: \`${universeId}\`).\nUse \`/ingameban\` to test it — if you get an API error, check your API key permissions.`,
-      ephemeral: true
-    });
-    return;
-  }
-
-  if (subcommand === "remove") {
-    const nameOrId = interaction.options.getString("name", true).trim();
-    const removed = db.removeRobloxGame(guild.id, nameOrId);
-    if (!removed) {
-      await interaction.reply({ content: `No game found named or with ID \`${nameOrId}\`. Use \`/roblox list\` to see what's configured.`, ephemeral: true });
-      return;
-    }
-    await writeAuditAndPost(db, guild, interaction.user.id, "roblox.game.removed", { nameOrId });
-    await interaction.reply({ content: `Removed Roblox game \`${nameOrId}\`.`, ephemeral: true });
-    return;
-  }
-
-  if (subcommand === "set-default") {
-    const nameOrId = interaction.options.getString("name", true).trim();
-    const ok = db.setDefaultRobloxGame(guild.id, nameOrId);
-    if (!ok) {
-      await interaction.reply({ content: `No game found named or with ID \`${nameOrId}\`. Use \`/roblox list\` to see what's configured.`, ephemeral: true });
-      return;
-    }
-    await writeAuditAndPost(db, guild, interaction.user.id, "roblox.game.default_set", { nameOrId });
-    await interaction.reply({ content: `✅ **${nameOrId}** is now the default game for automatic in-game ban execution from logs.`, ephemeral: true });
-    return;
-  }
-
-  // list
-  const games = db.listRobloxGames(guild.id);
-  if (games.length === 0) {
-    await interaction.reply({ content: "No Roblox games configured. Use `/roblox add` to add one.", ephemeral: true });
-    return;
-  }
-  const lines = games.map((g) =>
-    `${g.isDefault ? "⭐ " : ""}**${g.name}** — Universe \`${g.universeId}\` — Key: \`${g.apiKey.slice(0, 6)}…${g.apiKey.slice(-4)}\``
-  );
   const embed = new EmbedBuilder()
-    .setTitle("Configured Roblox Games")
+    .setTitle("🎮 Roblox Game Management")
     .setColor(0xe00000)
-    .setDescription(lines.join("\n"))
-    .setFooter({ text: "API key shown truncated. Use /roblox add to update." })
     .setTimestamp();
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+
+  if (games.length === 0) {
+    embed.setDescription("No Roblox game configured yet.\nClick **Add Game** to link this server's game.");
+  } else {
+    const lines = games.map((g) =>
+      `${g.isDefault ? "⭐ " : ""}**${g.name}**\nUniverse: \`${g.universeId}\`\nKey: \`${g.apiKey.slice(0, 6)}…${g.apiKey.slice(-4)}\``
+    );
+    embed
+      .setDescription(lines.join("\n\n"))
+      .setFooter({ text: "API key shown truncated for security." });
+  }
+
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+
+  // Add Game button (always shown)
+  rows.push(
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId("roblox:add")
+        .setLabel("➕ Add Game")
+        .setStyle(ButtonStyle.Success)
+    )
+  );
+
+  // Per-game Remove / Set Default buttons (one row per game, max 5 games)
+  for (const game of games.slice(0, 4)) {
+    const btns = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`roblox:remove:${game.id}`)
+        .setLabel(`🗑️ Remove ${game.name}`)
+        .setStyle(ButtonStyle.Danger),
+      ...(games.length > 1
+        ? [new ButtonBuilder()
+            .setCustomId(`roblox:setdefault:${game.id}`)
+            .setLabel(game.isDefault ? `⭐ Default (${game.name})` : `Set Default: ${game.name}`)
+            .setStyle(game.isDefault ? ButtonStyle.Secondary : ButtonStyle.Primary)
+            .setDisabled(game.isDefault)]
+        : [])
+    );
+    rows.push(btns);
+  }
+
+  return { embeds: [embed], components: rows };
+}
+
+// ── Roblox button handler (exported — wired in index.ts) ─────────────────────
+
+export async function handleRobloxButton(db: AppDatabase, interaction: ButtonInteraction): Promise<boolean> {
+  if (!interaction.customId.startsWith("roblox:")) return false;
+  if (!interaction.guild) return false;
+
+  const member = interaction.member as GuildMember;
+  if (!canUseAccess(db, member, "head")) {
+    await interaction.reply({ content: "You don't have permission to manage Roblox games.", ephemeral: true });
+    return true;
+  }
+
+  const parts = interaction.customId.split(":");
+  const action = parts[1];
+
+  if (action === "add") {
+    const modal = new ModalBuilder()
+      .setCustomId("roblox:add_modal")
+      .setTitle("Add Roblox Game")
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("universe_id")
+            .setLabel("Universe ID")
+            .setPlaceholder("e.g. 10163900853 — from the Creator Hub URL")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(20)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("api_key")
+            .setLabel("API Key")
+            .setPlaceholder("rblx_xxxx... — from create.roblox.com/settings/credentials")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(200)
+        ),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("name")
+            .setLabel("Game Name")
+            .setPlaceholder("e.g. My Game")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(80)
+        )
+      );
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  if (action === "remove") {
+    const gameId = parseInt(parts[2], 10);
+    const games = db.listRobloxGames(interaction.guild.id);
+    const game = games.find((g) => g.id === gameId);
+    if (!game) {
+      await interaction.reply({ content: "Game not found — it may have already been removed.", ephemeral: true });
+      return true;
+    }
+    db.removeRobloxGame(interaction.guild.id, game.universeId);
+    await writeAuditAndPost(db, interaction.guild, interaction.user.id, "roblox.game.removed", { name: game.name });
+    await interaction.update(buildRobloxPanel(db, interaction.guild.id));
+    return true;
+  }
+
+  if (action === "setdefault") {
+    const gameId = parseInt(parts[2], 10);
+    const games = db.listRobloxGames(interaction.guild.id);
+    const game = games.find((g) => g.id === gameId);
+    if (!game) {
+      await interaction.reply({ content: "Game not found.", ephemeral: true });
+      return true;
+    }
+    db.setDefaultRobloxGame(interaction.guild.id, game.universeId);
+    await writeAuditAndPost(db, interaction.guild, interaction.user.id, "roblox.game.default_set", { name: game.name });
+    await interaction.update(buildRobloxPanel(db, interaction.guild.id));
+    return true;
+  }
+
+  return false;
+}
+
+// ── Roblox modal handler (exported — wired in index.ts) ──────────────────────
+
+export async function handleRobloxModal(db: AppDatabase, interaction: import("discord.js").ModalSubmitInteraction): Promise<boolean> {
+  if (interaction.customId !== "roblox:add_modal") return false;
+  if (!interaction.guild) return false;
+
+  const member = interaction.member as GuildMember;
+  if (!canUseAccess(db, member, "head")) {
+    await interaction.reply({ content: "You don't have permission to manage Roblox games.", ephemeral: true });
+    return true;
+  }
+
+  const universeId = interaction.fields.getTextInputValue("universe_id").trim();
+  const apiKey = interaction.fields.getTextInputValue("api_key").trim();
+  const name = interaction.fields.getTextInputValue("name").trim();
+
+  if (!/^\d+$/.test(universeId)) {
+    await interaction.reply({ content: "❌ Universe ID must be a number. Find it in the Creator Hub URL for your experience.", ephemeral: true });
+    return true;
+  }
+
+  db.upsertRobloxGame(interaction.guild.id, universeId, apiKey, name);
+  await writeAuditAndPost(db, interaction.guild, interaction.user.id, "roblox.game.added", { universeId, name });
+
+  // Refresh the panel if the original message is still there
+  const guildId = interaction.guild!.id;
+  await interaction.deferUpdate().catch(() => null);
+  await interaction.editReply(buildRobloxPanel(db, guildId)).catch(async () => {
+    await interaction.followUp({ ...buildRobloxPanel(db, guildId), ephemeral: true }).catch(() => null);
+  });
+  return true;
 }
 
 async function handleMultiplier(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {

@@ -531,28 +531,7 @@ function logCommand() {
 function robloxCommand() {
   return new SlashCommandBuilder()
     .setName("roblox")
-    .setDescription("Manage Roblox game configurations for in-game bans.")
-    .addSubcommand((sub) =>
-      sub
-        .setName("add")
-        .setDescription("Add or update a Roblox game for in-game ban enforcement.")
-        .addStringOption((option) => option.setName("universe_id").setDescription("Roblox Universe ID (from Creator Hub URL).").setRequired(true))
-        .addStringOption((option) => option.setName("api_key").setDescription("Roblox Open Cloud API key with Manage Users permission.").setRequired(true))
-        .addStringOption((option) => option.setName("name").setDescription("Friendly name, e.g. My Game. Used in /ingameban game: option.").setRequired(true))
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName("remove")
-        .setDescription("Remove a configured Roblox game.")
-        .addStringOption((option) => option.setName("name").setDescription("Game name or Universe ID.").setRequired(true))
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName("set-default")
-        .setDescription("Set the default game used for automatic ingame ban execution from logs.")
-        .addStringOption((option) => option.setName("name").setDescription("Game name or Universe ID.").setRequired(true))
-    )
-    .addSubcommand((sub) => sub.setName("list").setDescription("List configured Roblox games for this server."))
+    .setDescription("Open the Roblox game management panel.")
     .setDefaultMemberPermissions(headDefault);
 }
 
