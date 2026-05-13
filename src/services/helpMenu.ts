@@ -363,6 +363,25 @@ const helpCommands: HelpCommand[] = [
     notes: ["PM2 automatically brings the bot back online after restart.", "The bot will be offline for a few seconds during restart."]
   },
   {
+    id: "roblox-server-setup",
+    label: "Roblox Game Setup (per server)",
+    access: "head",
+    levels: ["admin"],
+    what: "Each server that uses this bot configures its own Roblox game. Once set, all in-game bans and unbans from `/log` and `/ingameban` go to that server's game automatically.",
+    who: "Head Mod and above.",
+    usage: ["`/roblox add universe_id:<id> api_key:<key> name:<name>`"],
+    examples: ["`/roblox add universe_id:10163900853 api_key:rblx_xxxx name:My Game`"],
+    notes: [
+      "**This is a one-time setup per server.** Each Discord server has its own game — other servers are completely separate.",
+      "Universe ID: go to create.roblox.com, open your experience, the number in the URL is the ID.",
+      "API Key: create at create.roblox.com/settings/credentials. Select **User API key** (not group). Enable **User Restrictions → Write** and **Messaging Service → Publish**, and scope it to your universe.",
+      "Once added, `/ingameban` will work and all Ingame ban logs via `/log` will auto-execute the Roblox ban.",
+      "Accepted Ingame Ban appeal logs will auto-execute the unban.",
+      "Junior mod ingame bans execute after a senior reviews and approves the log.",
+      "To update the API key later, re-run `/roblox add` with the same universe ID — it overwrites."
+    ]
+  },
+  {
     id: "setup",
     label: "/setup",
     access: "owner",
