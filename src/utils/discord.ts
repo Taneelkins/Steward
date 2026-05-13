@@ -174,7 +174,14 @@ export async function requireMod(db: AppDatabase, member: GuildMember) {
   }
 }
 
-export function configSummaryEmbed(config: GuildConfig, extra: { ingameLogChannelId?: string | null } = {}) {
+export function configSummaryEmbed(
+  config: GuildConfig,
+  extra: { ingameLogChannelId?: string | null; robloxGame?: { name: string; universeId: string } | null } = {}
+) {
+  const robloxValue = extra.robloxGame
+    ? `**${extra.robloxGame.name}**\nUniverse \`${extra.robloxGame.universeId}\``
+    : "Not configured — run `/roblox`";
+
   return new EmbedBuilder()
     .setTitle("Bot Configuration")
     .setColor(colors.voidPurple)
@@ -193,6 +200,7 @@ export function configSummaryEmbed(config: GuildConfig, extra: { ingameLogChanne
       { name: "Approval Channel", value: config.approvalChannelId ? `<#${config.approvalChannelId}>` : "Not set", inline: true },
       { name: "Junior Help", value: config.juniorHelpChannelId ? `<#${config.juniorHelpChannelId}>` : "Not set", inline: true },
       { name: "Steward Actions", value: config.stewardLogChannelId ? `<#${config.stewardLogChannelId}>` : "Not set", inline: true },
+      { name: "Roblox Game", value: robloxValue, inline: true },
       { name: "Timezone", value: config.timezone, inline: true },
       { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "CM Approval Toggle", value: config.approvalEnabled ? "Enabled" : "Disabled", inline: true },

@@ -1453,8 +1453,10 @@ function isStaffRoleKey(value) {
     return ["staff", "juniorMod", "mod", "seniorMod", "headMod", "communityManager"].includes(value);
 }
 function configEmbed(db, guildId) {
+    const game = db.getAutoRobloxGame(guildId) ?? db.listRobloxGames(guildId)[0];
     return configSummaryEmbed(db.getGuildConfig(guildId), {
-        ingameLogChannelId: db.getActionLogChannelId(guildId, "ban")
+        ingameLogChannelId: db.getActionLogChannelId(guildId, "ban"),
+        robloxGame: game ? { name: game.name, universeId: game.universeId } : null
     });
 }
 const DEV_USER_ID = "616267913799925782";

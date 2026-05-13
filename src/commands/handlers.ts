@@ -1767,8 +1767,10 @@ function isStaffRoleKey(value: string): value is StaffRoleKey {
 }
 
 function configEmbed(db: AppDatabase, guildId: string) {
+  const game = db.getAutoRobloxGame(guildId) ?? db.listRobloxGames(guildId)[0];
   return configSummaryEmbed(db.getGuildConfig(guildId), {
-    ingameLogChannelId: db.getActionLogChannelId(guildId, "ban")
+    ingameLogChannelId: db.getActionLogChannelId(guildId, "ban"),
+    robloxGame: game ? { name: game.name, universeId: game.universeId } : null
   });
 }
 

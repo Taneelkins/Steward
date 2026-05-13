@@ -185,18 +185,19 @@ const helpCommands: HelpCommand[] = [
     label: "/roblox",
     access: "head",
     levels: ["admin"],
-    what: "Manages Roblox game configurations used for in-game ban enforcement from `/ingameban` and the `/log` workflow.",
+    what: "Opens the Roblox game management panel. Add, remove, or set a default game for in-game ban enforcement — all through buttons and a form, no typed commands needed.",
     who: "Head Mod and above.",
-    usage: ["`/roblox add universe_id:<id> api_key:<key> name:<name>`", "`/roblox remove name:<name>`", "`/roblox set-default name:<name>`", "`/roblox list`"],
-    subcommands: ["add, remove, set-default, list"],
-    examples: ["`/roblox add universe_id:12345678 api_key:rblx_… name:My Game`", "`/roblox set-default name:My Game`", "`/roblox list`"],
+    usage: ["`/roblox`"],
+    subcommands: ["Panel buttons: ➕ Add Game (form popup), 🗑️ Remove, ⭐ Set Default"],
+    examples: ["`/roblox`"],
     notes: [
-      "Universe ID — go to create.roblox.com, open your experience, copy the number from the URL.",
-      "API Key — create at create.roblox.com/settings/credentials. Give it **User Restrictions → Write** and **Messaging Service → Publish** permissions.",
-      "If only one game is configured it is used automatically for all log-based bans.",
-      "If multiple games are configured, use `/roblox set-default` to designate which one is used for auto-execution from logs. `/ingameban` still accepts a `game` option for manual override.",
-      "API keys are stored locally in the bot database. Treat the database file as sensitive.",
-      "To update an API key, re-run `/roblox add` with the same universe_id — it will overwrite."
+      "Click **➕ Add Game** to fill in Universe ID, API Key, and a friendly name in a popup form.",
+      "Each game shows **🗑️ Remove** and (if multiple games) **Set Default** buttons — click to act instantly, panel refreshes.",
+      "Universe ID: open your experience on create.roblox.com — the number in the URL is the ID.",
+      "API Key: create at create.roblox.com/settings/credentials. Select **User API key**. Enable **User Restrictions → Write** and **Messaging Service → Publish**, scoped to your universe.",
+      "If only one game is configured it is used automatically. If multiple, use Set Default to pick which one is used for auto-execution from `/log`.",
+      "API keys are stored locally in the bot database — treat it as sensitive.",
+      "To update a key, add the same Universe ID again — it overwrites."
     ]
   },
   {
@@ -338,7 +339,7 @@ const helpCommands: HelpCommand[] = [
       "cm_approval behavior toggle enables or disables the CM approval flow for cases that require it.",
       "interactive_log behavior toggle enables or disables the button-based interactive logger (fallback to typed /log fields when off).",
       "Warn system is automatic — warnings are tracked per Discord user. No extra config needed. Use /log (discord action, warn type) and Execute Punishment to issue and record warnings.",
-      "**Roblox game config is NOT done here.** Use `/roblox add universe_id:<id> api_key:<key> name:<name>` to link your game. Each server sets its own game once and all in-game bans from `/log` and `/ingameban` route to it automatically."
+      "**Roblox game config is NOT done here.** Run `/roblox` and click ➕ Add Game to link this server's game. Once saved it shows under **Roblox Game** in `/config check`. All in-game bans from `/log` and `/ingameban` route to it automatically."
     ]
   },
   {
@@ -368,18 +369,19 @@ const helpCommands: HelpCommand[] = [
     label: "Roblox Game Setup (per server)",
     access: "head",
     levels: ["admin"],
-    what: "Each server that uses this bot configures its own Roblox game. Once set, all in-game bans and unbans from `/log` and `/ingameban` go to that server's game automatically.",
+    what: "Each server that uses this bot links its own Roblox game once via /roblox. After that, all in-game bans and unbans from /log and /ingameban go to that server's game automatically.",
     who: "Head Mod and above.",
-    usage: ["`/roblox add universe_id:<id> api_key:<key> name:<name>`"],
-    examples: ["`/roblox add universe_id:10163900853 api_key:rblx_xxxx name:My Game`"],
+    usage: ["`/roblox` → click ➕ Add Game"],
+    examples: ["`/roblox` then fill in Universe ID, API Key, and name in the popup form"],
     notes: [
-      "**This is a one-time setup per server.** Each Discord server has its own game — other servers are completely separate.",
-      "Universe ID: go to create.roblox.com, open your experience, the number in the URL is the ID.",
-      "API Key: create at create.roblox.com/settings/credentials. Select **User API key** (not group). Enable **User Restrictions → Write** and **Messaging Service → Publish**, and scope it to your universe.",
-      "Once added, `/ingameban` will work and all Ingame ban logs via `/log` will auto-execute the Roblox ban.",
-      "Accepted Ingame Ban appeal logs will auto-execute the unban.",
-      "Junior mod ingame bans execute after a senior reviews and approves the log.",
-      "To update the API key later, re-run `/roblox add` with the same universe ID — it overwrites."
+      "**One-time setup per server.** Each Discord server has its own game — completely separate from other servers.",
+      "Run `/config check` after setup to confirm the game is shown under Roblox Game.",
+      "Universe ID: open your experience on create.roblox.com — the number in the URL.",
+      "API Key: create.roblox.com/settings/credentials → **User API key** (not group) → enable **User Restrictions → Write** and **Messaging Service → Publish** → scope to your universe.",
+      "Once saved: `/ingameban` works, Ingame ban logs via `/log` auto-ban, accepted Ingame Ban appeal logs auto-unban.",
+      "Junior mod ingame bans wait for senior review approval before executing.",
+      "Normal/head mod ingame bans execute the moment the log is submitted.",
+      "If the ban stamp shows ⚠️ Ingame Ban Failed, check the API key permissions and Universe ID via `/roblox`."
     ]
   },
   {
