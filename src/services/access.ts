@@ -33,6 +33,7 @@ export const commandAccess: Record<string, CommandAccess> = {
   ingameban: "normal",
   ingameunban: "head",
   roblox: "head",
+  autopunish: "head",
   action: "head",
   addpoints: "head",
   removepoints: "head",

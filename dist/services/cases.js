@@ -307,6 +307,9 @@ export async function autoExecuteIngameBan(db, guild, caseId) {
     const record = db.getCase(guild.id, caseId);
     if (!record || !isIngameBanCase(record))
         return;
+    const config = db.getGuildConfig(guild.id);
+    if (config.autoPunishDisabled.includes("ingame"))
+        return;
     const game = db.getAutoRobloxGame(guild.id);
     if (!game) {
         const games = db.listRobloxGames(guild.id);
@@ -344,6 +347,9 @@ export async function autoExecuteIngameBan(db, guild, caseId) {
 export async function autoExecuteIngameUnban(db, guild, caseId) {
     const record = db.getCase(guild.id, caseId);
     if (!record || !isIngameBanAppealAccepted(record))
+        return;
+    const config = db.getGuildConfig(guild.id);
+    if (config.autoPunishDisabled.includes("appeal"))
         return;
     const game = db.getAutoRobloxGame(guild.id);
     if (!game) {
@@ -908,6 +914,9 @@ export function buildExecutePunishmentButton(record, config) {
     const isAppealAccept = record.actionName === "appeal" && record.appealResult === "accepted";
     const isDiscordAction = record.actionName === "discord" || record.actionName === "discord-ban";
     if (!isDiscordAction && !isAppealAccept)
+        return null;
+    // If auto-punish is disabled for discord actions, suppress the button too
+    if (config.autoPunishDisabled?.includes("discord"))
         return null;
     const label = isAppealAccept ? "✅ Reverse Punishment" : "⚡ Execute Punishment";
     const style = isAppealAccept ? ButtonStyle.Success : ButtonStyle.Danger;

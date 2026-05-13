@@ -201,6 +201,24 @@ const helpCommands: HelpCommand[] = [
     ]
   },
   {
+    id: "autopunish",
+    label: "/autopunish",
+    access: "head",
+    levels: ["admin"],
+    what: "Opens a panel to view and toggle automatic punishment execution for different log types.",
+    who: "Head Mod and above.",
+    usage: ["`/autopunish`"],
+    subcommands: ["Panel buttons: Enable/Disable Ingame Bans, Ingame Unbans, Discord Actions"],
+    examples: ["`/autopunish`"],
+    notes: [
+      "**Ingame Bans** — controls whether ingame ban logs auto-execute the Roblox ban. Disable if you want to manage bans manually.",
+      "**Ingame Unbans** — controls whether accepted ingame ban appeal logs auto-execute the in-game unban.",
+      "**Discord Actions** — controls whether the ⚡ Execute Punishment button appears on discord action / appeal logs.",
+      "All three are enabled by default. Toggling is instant and reflected immediately in the panel.",
+      "Useful if you want to pause all auto-enforcement temporarily (e.g. during a bot API key rotation) without losing case log data."
+    ]
+  },
+  {
     id: "lookup",
     label: "/lookup",
     access: "normal",

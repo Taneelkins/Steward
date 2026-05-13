@@ -205,7 +205,20 @@ export function configSummaryEmbed(
       { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "CM Approval Toggle", value: config.approvalEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "Point System", value: config.pointsEnabled ? "Enabled" : "Disabled", inline: true },
-      { name: "Quota Enabled", value: config.quotaEnabled ? "Yes" : "No", inline: true }
+      { name: "Quota Enabled", value: config.quotaEnabled ? "Yes" : "No", inline: true },
+      {
+        name: "Auto-Punish",
+        value: (() => {
+          const d = config.autoPunishDisabled;
+          const lines = [
+            `Ingame Bans: ${d.includes("ingame") ? "❌ Off" : "✅ On"}`,
+            `Ingame Unbans: ${d.includes("appeal") ? "❌ Off" : "✅ On"}`,
+            `Discord Actions: ${d.includes("discord") ? "❌ Off" : "✅ On"}`
+          ];
+          return lines.join("\n");
+        })(),
+        inline: true
+      }
     );
 }
 

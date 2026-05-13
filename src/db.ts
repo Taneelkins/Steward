@@ -265,6 +265,14 @@ export class AppDatabase {
     return Boolean(this.get("SELECT 1 FROM guild_configs WHERE linked_guild_id = ?", guildId));
   }
 
+  setAutoPunishDisabled(guildId: string, disabled: string[]) {
+    this.ensureGuild(guildId);
+    this.run(
+      "UPDATE guild_configs SET auto_punish_disabled_json = ?, updated_at = ? WHERE guild_id = ?",
+      JSON.stringify(disabled), nowIso(), guildId
+    );
+  }
+
   getGuildConfig(guildId: string): GuildConfig {
     this.ensureGuild(guildId);
     const row = this.get<GuildConfigRow>("SELECT * FROM guild_configs WHERE guild_id = ?", guildId);
@@ -805,6 +813,7 @@ export class AppDatabase {
     this.ensureColumn("moderation_cases", "log_message_id", "TEXT");
     this.ensureColumn("moderation_cases", "log_channel_id", "TEXT");
     this.ensureColumn("roblox_games", "is_default", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("guild_configs", "auto_punish_disabled_json", "TEXT");
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
@@ -859,6 +868,7 @@ type GuildConfigRow = {
   multiplier_milli: number;
   multiplier_ends_at: string | null;
   last_transcript_message_id: string | null;
+  auto_punish_disabled_json: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1029,6 +1039,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     multiplierMilli: row.multiplier_milli,
     multiplierEndsAt: row.multiplier_ends_at,
     lastTranscriptMessageId: row.last_transcript_message_id,
+    autoPunishDisabled: parseStringList(row.auto_punish_disabled_json),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

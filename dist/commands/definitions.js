@@ -80,6 +80,7 @@ export function buildCommands(options = {}) {
             .addStringOption((option) => option.setName("game").setDescription("Game name as set in /roblox list (required if multiple games configured)."))
             .setDefaultMemberPermissions(headDefault),
         robloxCommand(),
+        autopunishCommand(),
         new SlashCommandBuilder()
             .setName("lookup")
             .setDescription("Search all case logs by target identity.")
@@ -421,6 +422,12 @@ function robloxCommand() {
     return new SlashCommandBuilder()
         .setName("roblox")
         .setDescription("Open the Roblox game management panel.")
+        .setDefaultMemberPermissions(headDefault);
+}
+function autopunishCommand() {
+    return new SlashCommandBuilder()
+        .setName("autopunish")
+        .setDescription("View or toggle automatic punishment execution for different log types.")
         .setDefaultMemberPermissions(headDefault);
 }
 function textChannelOption(option, name, description) {

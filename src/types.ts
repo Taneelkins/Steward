@@ -43,6 +43,7 @@ export type GuildConfig = {
   multiplierMilli: number;
   multiplierEndsAt: string | null;
   lastTranscriptMessageId: string | null;
+  autoPunishDisabled: string[];
   createdAt: string;
   updatedAt: string;
 };

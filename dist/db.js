@@ -158,6 +158,10 @@ export class AppDatabase {
     isLinkedCommunityServer(guildId) {
         return Boolean(this.get("SELECT 1 FROM guild_configs WHERE linked_guild_id = ?", guildId));
     }
+    setAutoPunishDisabled(guildId, disabled) {
+        this.ensureGuild(guildId);
+        this.run("UPDATE guild_configs SET auto_punish_disabled_json = ?, updated_at = ? WHERE guild_id = ?", JSON.stringify(disabled), nowIso(), guildId);
+    }
     getGuildConfig(guildId) {
         this.ensureGuild(guildId);
         const row = this.get("SELECT * FROM guild_configs WHERE guild_id = ?", guildId);
@@ -615,6 +619,7 @@ export class AppDatabase {
         this.ensureColumn("moderation_cases", "log_message_id", "TEXT");
         this.ensureColumn("moderation_cases", "log_channel_id", "TEXT");
         this.ensureColumn("roblox_games", "is_default", "INTEGER NOT NULL DEFAULT 0");
+        this.ensureColumn("guild_configs", "auto_punish_disabled_json", "TEXT");
     }
     ensureColumn(table, column, definition) {
         const columns = this.all(`PRAGMA table_info(${table})`);
@@ -669,6 +674,7 @@ function mapGuildConfig(row) {
         multiplierMilli: row.multiplier_milli,
         multiplierEndsAt: row.multiplier_ends_at,
         lastTranscriptMessageId: row.last_transcript_message_id,
+        autoPunishDisabled: parseStringList(row.auto_punish_disabled_json),
         createdAt: row.created_at,
         updatedAt: row.updated_at
     };

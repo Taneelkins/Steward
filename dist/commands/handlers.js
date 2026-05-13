@@ -107,6 +107,9 @@ export async function handleChatInputCommand(interaction, context) {
             case "roblox":
                 await handleRoblox(interaction, context, member);
                 break;
+            case "autopunish":
+                await handleAutoPunish(interaction, context, member);
+                break;
             case "multiplier":
                 await handleMultiplier(interaction, context, member);
                 break;
@@ -148,6 +151,9 @@ export async function handleChatInputCommand(interaction, context) {
                 break;
             case "roblox":
                 await handleRoblox(interaction, context, member);
+                break;
+            case "autopunish":
+                await handleAutoPunish(interaction, context, member);
                 break;
             default:
                 await interaction.reply({ content: "Unknown command.", ephemeral: true });
@@ -930,6 +936,68 @@ export async function handleRobloxModal(db, interaction) {
     await interaction.editReply(buildRobloxPanel(db, guildId)).catch(async () => {
         await interaction.followUp({ ...buildRobloxPanel(db, guildId), ephemeral: true }).catch(() => null);
     });
+    return true;
+}
+// ── AutoPunish panel ─────────────────────────────────────────────────────────
+const PUNISH_TYPES = [
+    { key: "ingame", label: "Ingame Bans", description: "Auto-ban players in-game when an ingame ban log is created/approved." },
+    { key: "appeal", label: "Ingame Unbans", description: "Auto-unban players in-game when an accepted ingame appeal log is created/approved." },
+    { key: "discord", label: "Discord Actions", description: "Show the ⚡ Execute Punishment button on discord/appeal action logs." },
+];
+function buildAutoPunishPanel(db, guildId) {
+    const config = db.getGuildConfig(guildId);
+    const disabled = config.autoPunishDisabled;
+    const lines = PUNISH_TYPES.map((t) => {
+        const on = !disabled.includes(t.key);
+        return `${on ? "✅" : "❌"} **${t.label}** — ${t.description}`;
+    });
+    const embed = new EmbedBuilder()
+        .setTitle("⚡ Auto-Punishment Settings")
+        .setColor(0x5865f2)
+        .setDescription(lines.join("\n\n"))
+        .setFooter({ text: "Toggle each type with the buttons below." });
+    const buttons = PUNISH_TYPES.map((t) => {
+        const on = !disabled.includes(t.key);
+        return new ButtonBuilder()
+            .setCustomId(`autopunish:toggle:${t.key}`)
+            .setLabel(`${on ? "Disable" : "Enable"} ${t.label}`)
+            .setStyle(on ? ButtonStyle.Danger : ButtonStyle.Success);
+    });
+    const row = new ActionRowBuilder().addComponents(...buttons);
+    return { embeds: [embed], components: [row] };
+}
+async function handleAutoPunish(interaction, { db }, member) {
+    if (!canUseAccess(db, member, "head"))
+        throw new Error(commandDeniedMessage("head"));
+    await interaction.reply({ ...buildAutoPunishPanel(db, interaction.guild.id), ephemeral: true });
+}
+export async function handleAutoPunishButton(db, interaction) {
+    if (!interaction.customId.startsWith("autopunish:"))
+        return false;
+    if (!interaction.guild)
+        return false;
+    const member = interaction.member;
+    if (!canUseAccess(db, member, "head")) {
+        await interaction.reply({ content: "You need Head Mod or higher to change auto-punishment settings.", ephemeral: true });
+        return true;
+    }
+    const parts = interaction.customId.split(":");
+    if (parts[1] !== "toggle")
+        return false;
+    const key = parts[2];
+    if (!PUNISH_TYPES.some((t) => t.key === key))
+        return false;
+    const config = db.getGuildConfig(interaction.guild.id);
+    const disabled = [...config.autoPunishDisabled];
+    const idx = disabled.indexOf(key);
+    if (idx === -1) {
+        disabled.push(key);
+    }
+    else {
+        disabled.splice(idx, 1);
+    }
+    db.setAutoPunishDisabled(interaction.guild.id, disabled);
+    await interaction.update(buildAutoPunishPanel(db, interaction.guild.id));
     return true;
 }
 async function handleMultiplier(interaction, { db }, member) {
