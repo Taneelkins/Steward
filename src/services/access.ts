@@ -56,6 +56,6 @@ export function tierAllows(tier: StaffTier | null, access: CommandAccess) {
   if (!tier) return false;
   if (tier === "community") return true;
   if (tier === "head") return access === "head" || access === "normal" || access === "junior";
-  if (tier === "normal") return access === "normal";
+  if (tier === "normal") return access === "normal" || access === "junior";
   return access === "junior";
 }

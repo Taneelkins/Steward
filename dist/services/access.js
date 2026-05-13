@@ -57,6 +57,6 @@ export function tierAllows(tier, access) {
     if (tier === "head")
         return access === "head" || access === "normal" || access === "junior";
     if (tier === "normal")
-        return access === "normal";
+        return access === "normal" || access === "junior";
     return access === "junior";
 }
