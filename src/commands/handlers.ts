@@ -1086,7 +1086,7 @@ async function handleEdit(interaction: ChatInputCommandInteraction, { db }: Comm
     // DataStore permission missing or API error
     await interaction.editReply(
       `❌ Could not read player data: ${readResult.error}\n` +
-      `-# Make sure the API key has **DataStore → Read & Write** permission in the Roblox Creator Hub.`
+      `-# Make sure the API key has **Universe Datastore Objects → Read** and **Universe Datastore Objects → Update** permissions in the Roblox Creator Hub, with your universe added under each permission.`
     );
     return;
   }
