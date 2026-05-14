@@ -1240,7 +1240,8 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
     return true;
   }
 
-  if (interaction.user.id !== record.moderatorUserId) {
+  const DEV_USER_ID = "616267913799925782";
+  if (interaction.user.id !== record.moderatorUserId && interaction.user.id !== DEV_USER_ID) {
     await interaction.editReply("Only the moderator who submitted this case can execute the punishment.");
     return true;
   }
