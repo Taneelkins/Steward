@@ -77,8 +77,8 @@ type LogActionButton = {
 
 const sessions = new Map<string, LogDraft>();
 const sessionsByUser = new Map<string, string>();
-const SESSION_TTL_MS = 5 * 60 * 1000;
-const DRAFT_STALE_MS = 30 * 60 * 1000;
+const SESSION_TTL_MS = 20 * 60 * 1000;
+const DRAFT_STALE_MS = 60 * 60 * 1000;
 const MAX_MEDIA_LINKS = 20;
 
 // ── Draft persistence ───────────────────────────────────────────────────────
@@ -184,9 +184,13 @@ function loadDraftsFromDisk() {
         fs.unlinkSync(path.join(draftsDir, file));
         continue;
       }
-      const draft: LogDraft = { ...data, statusMessage: null, timeout: null, editReply: null };
+      // Reset updatedAt so the in-memory TTL clock starts from now, not from before the crash.
+      // Without this, getDraft() immediately sees "5+ minutes old" and fires the expiry error.
+      const draft: LogDraft = { ...data, updatedAt: Date.now(), statusMessage: null, timeout: null, editReply: null };
       sessions.set(draft.id, draft);
       sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
+      // Schedule the inactivity timeout so recovered drafts don't linger in memory forever.
+      touchDraft(draft);
       console.log(`Recovered log draft ${draft.id} for user ${draft.userId} in guild ${draft.guildId}`);
     } catch { /* corrupt file — skip */ }
   }
@@ -591,7 +595,7 @@ export async function handleLogMediaMessage(db: AppDatabase, message: Message) {
   if (!draft || !draft.mediaCaptureEnabled || draft.channelId !== message.channelId) return false;
   if (draft.stage !== "fields") return false;
   if (Date.now() - draft.updatedAt > SESSION_TTL_MS) {
-    await cancelDraft(draft, "Log automatically cancelled after 5 minutes of inactivity.");
+    await cancelDraft(draft, "Log automatically cancelled after 20 minutes of inactivity.");
     return false;
   }
 
@@ -687,7 +691,7 @@ function getDraft(sessionId: string | undefined, interaction: ButtonInteraction 
     return null;
   }
   if (Date.now() - draft.updatedAt > SESSION_TTL_MS) {
-    void cancelDraft(draft, "Log automatically cancelled after 5 minutes of inactivity.").catch(() => null);
+    void cancelDraft(draft, "Log automatically cancelled after 20 minutes of inactivity.").catch(() => null);
     void interaction.reply({ content: "That log draft expired. Run `/log` again.", ephemeral: true }).catch(() => null);
     return null;
   }
@@ -755,7 +759,7 @@ function previewPayload(db: AppDatabase, draft: LogDraft) {
     .setColor(colors.voidPurple)
     .setDescription(stageDescription(draft))
     .addFields(fields)
-    .setFooter({ text: "Only one pending log can be active per user. Inactive drafts expire after 5 minutes." });
+    .setFooter({ text: "Only one pending log can be active per user. Inactive drafts expire after 20 minutes." });
 
   return {
     content: [
@@ -1416,7 +1420,7 @@ function touchDraft(draft: LogDraft) {
   saveDraftToDisk(draft);
   if (draft.timeout) clearTimeout(draft.timeout);
   draft.timeout = setTimeout(() => {
-    void cancelDraft(draft, "Log automatically cancelled after 5 minutes of inactivity.").catch(() => null);
+    void cancelDraft(draft, "Log automatically cancelled after 20 minutes of inactivity.").catch(() => null);
   }, SESSION_TTL_MS);
 }
 
