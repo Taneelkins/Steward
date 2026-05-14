@@ -11,8 +11,10 @@
  *   Open your game in the Creator Hub (create.roblox.com), look at the URL:
  *   https://create.roblox.com/dashboard/creations/experiences/{universeId}/overview
  */
+import { createHash } from "node:crypto";
 const ROBLOX_USERS_API = "https://users.roblox.com";
 const ROBLOX_CLOUD_API = "https://apis.roblox.com/cloud/v2";
+const ROBLOX_DATASTORE_V1 = "https://apis.roblox.com/datastores/v1";
 // ── User Lookup ───────────────────────────────────────────────────────────────
 /**
  * Resolve a Roblox username to its numeric user ID.
@@ -151,6 +153,90 @@ export async function sendDataEdit(universeId, apiKey, robloxUserId, statPath, v
     catch (err) {
         console.warn(`[roblox] MessagingService data edit request failed for userId ${robloxUserId}:`, err);
     }
+}
+/**
+ * Read a ProfileStore entry directly from the DataStore via Open Cloud API.
+ *
+ * Returns the full stored envelope:
+ *   { Data: {...}, MetaData: { ActiveSession: [...] | null, ... }, GlobalUpdates: [...] }
+ *
+ * The API key must have the "DataStore" permission with Read access.
+ * datastoreName must match the ProfileStore name used in the game (default: "Verdict01").
+ */
+export async function readProfileStoreEntry(options) {
+    const { universeId, apiKey, userId, datastoreName = "Verdict01" } = options;
+    const params = new URLSearchParams({ datastoreName, entryKey: String(userId) });
+    const url = `${ROBLOX_DATASTORE_V1}/universes/${universeId}/standard-datastores/datastore/entries/entry?${params}`;
+    try {
+        const res = await fetch(url, {
+            headers: { "x-api-key": apiKey },
+            signal: AbortSignal.timeout(15_000)
+        });
+        if (res.status === 404) {
+            return { success: false, error: "No saved data found for this player (they may have never joined).", notFound: true };
+        }
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            return { success: false, error: `DataStore read failed: HTTP ${res.status}${text ? ` — ${text.slice(0, 200)}` : ""}` };
+        }
+        const data = await res.json();
+        return { success: true, data };
+    }
+    catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : "Network error reading DataStore" };
+    }
+}
+/**
+ * Write a ProfileStore entry back to the DataStore via Open Cloud API.
+ * Pass the full envelope object returned by readProfileStoreEntry — we only
+ * modify the nested value, the rest of the envelope (MetaData, GlobalUpdates, etc.)
+ * is preserved exactly so ProfileStore's session locking is not disturbed.
+ *
+ * The API key must have the "DataStore" permission with Write access.
+ */
+export async function writeProfileStoreEntry(options) {
+    const { universeId, apiKey, userId, entry, datastoreName = "Verdict01" } = options;
+    const params = new URLSearchParams({ datastoreName, entryKey: String(userId) });
+    const url = `${ROBLOX_DATASTORE_V1}/universes/${universeId}/standard-datastores/datastore/entries/entry?${params}`;
+    const body = JSON.stringify(entry);
+    const contentMd5 = createHash("md5").update(body).digest("base64");
+    try {
+        const res = await fetch(url, {
+            method: "POST",
+            headers: {
+                "x-api-key": apiKey,
+                "content-type": "application/json",
+                "content-md5": contentMd5
+            },
+            body,
+            signal: AbortSignal.timeout(15_000)
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            return { success: false, error: `DataStore write failed: HTTP ${res.status}${text ? ` — ${text.slice(0, 200)}` : ""}` };
+        }
+        return { success: true };
+    }
+    catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : "Network error writing DataStore" };
+    }
+}
+/**
+ * Navigate a dot-notation path into a plain object and set the leaf value.
+ * Returns false only if an intermediate key doesn't exist (bad path).
+ * Always sets the final key regardless of whether it pre-existed.
+ */
+export function setNestedValue(obj, path, value) {
+    const parts = path.split(".");
+    let current = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+        const next = current[parts[i]];
+        if (typeof next !== "object" || next === null || Array.isArray(next))
+            return false;
+        current = next;
+    }
+    current[parts[parts.length - 1]] = value;
+    return true;
 }
 // ── Duration Parsing ──────────────────────────────────────────────────────────
 /**

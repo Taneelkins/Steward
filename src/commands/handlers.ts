@@ -59,7 +59,7 @@ import { replyHelpMenu } from "../services/helpMenu.js";
 import { normalizeTicketType, processOverdueTickets } from "../services/tickets.js";
 import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
-import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, sendDataEdit, unbanRobloxPlayer } from "../services/roblox.js";
+import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, readProfileStoreEntry, sendDataEdit, setNestedValue, unbanRobloxPlayer, writeProfileStoreEntry } from "../services/roblox.js";
 
 export type CommandContext = {
   db: AppDatabase;
@@ -1000,37 +1000,114 @@ async function handleEdit(interaction: ChatInputCommandInteraction, { db }: Comm
 
   await interaction.deferReply({ ephemeral: true });
 
-  const guild = interaction.guild!;
-  const robloxUsername = interaction.options.getString("roblox_user", true).trim();
-  const statPath       = interaction.options.getString("stat", true).trim();
-  const rawValue       = interaction.options.getString("value", true);
-  const gameOption     = interaction.options.getString("game");
+  const guild      = interaction.guild!;
+  const username   = interaction.options.getString("roblox_user", true).trim();
+  const statPath   = interaction.options.getString("stat", true).trim();
+  const rawValue   = interaction.options.getString("value", true);
+  const gameOption = interaction.options.getString("game");
+  const game       = resolveRobloxGame(db, guild.id, gameOption);
+  const value      = parseEditValue(rawValue);
 
-  // Resolve game
-  const game = resolveRobloxGame(db, guild.id, gameOption);
-
-  // Resolve Roblox user
-  const robloxUser = await lookupRobloxUser(robloxUsername);
+  const robloxUser = await lookupRobloxUser(username);
   if (!robloxUser) {
-    await interaction.editReply(`❌ Roblox user \`${robloxUsername}\` not found. Check the spelling and try again.`);
+    await interaction.editReply(`❌ Roblox user \`${username}\` not found. Check the spelling and try again.`);
     return;
   }
 
-  const value = parseEditValue(rawValue);
+  // ── Step 1: try to read the DataStore entry ──────────────────────────────
+  const readResult = await readProfileStoreEntry({
+    universeId: game.universeId,
+    apiKey: game.apiKey,
+    userId: robloxUser.id
+  });
 
-  await sendDataEdit(game.universeId, game.apiKey, robloxUser.id, statPath, value);
+  if (!readResult.success) {
+    if (readResult.notFound) {
+      // No data yet (never joined) — try a live broadcast as a last resort
+      await sendDataEdit(game.universeId, game.apiKey, robloxUser.id, statPath, value);
+      await interaction.editReply(
+        `⚠️ **${robloxUser.name}** has no saved data yet (never joined). Sent a live broadcast instead — ` +
+        `this only works if they are currently in-game.`
+      );
+      return;
+    }
+    // DataStore permission missing or API error
+    await interaction.editReply(
+      `❌ Could not read player data: ${readResult.error}\n` +
+      `-# Make sure the API key has **DataStore → Read & Write** permission in the Roblox Creator Hub.`
+    );
+    return;
+  }
+
+  // ── Step 2: check ActiveSession — is the player online? ──────────────────
+  const entry      = readResult.data as Record<string, unknown>;
+  const metaData   = entry.MetaData as Record<string, unknown> | undefined;
+  const activeSession = metaData?.ActiveSession; // null/undefined = offline, array = online
+
+  if (activeSession) {
+    // Player currently has an active ProfileStore session — editing the DataStore
+    // directly would be overwritten when their session saves. Use MessagingService.
+    await sendDataEdit(game.universeId, game.apiKey, robloxUser.id, statPath, value);
+    await writeAuditAndPost(db, guild, interaction.user.id, "data.edit", {
+      robloxUserId: robloxUser.id, robloxUsername: robloxUser.name,
+      statPath, value: String(value), method: "live (player online)"
+    });
+    await interaction.editReply(
+      `✅ **${robloxUser.name}** is currently online — edit applied live.\n` +
+      `\`${statPath}\` → \`${String(value)}\``
+    );
+    return;
+  }
+
+  // ── Step 3: player is offline — do DataStore read-modify-write ────────────
+  const profileData = entry.Data as Record<string, unknown> | undefined;
+  if (!profileData || !Array.isArray(profileData.Slots)) {
+    await interaction.editReply(`❌ Unexpected DataStore format — could not parse player data.`);
+    return;
+  }
+
+  // ProfileStore uses Lua 1-based slot indices; JSON arrays are 0-based in JS
+  const slotIndex = (typeof profileData.Current_Slot === "number" ? profileData.Current_Slot : 1) - 1;
+  const slots     = profileData.Slots as Array<Record<string, unknown>>;
+  const slot      = slots[slotIndex];
+  if (!slot) {
+    await interaction.editReply(`❌ Could not find slot ${slotIndex + 1} in the player's data.`);
+    return;
+  }
+
+  const ok = setNestedValue(slot, statPath, value);
+  if (!ok) {
+    await interaction.editReply(
+      `❌ Stat path \`${statPath}\` is invalid — an intermediate key doesn't exist.\n` +
+      `-# Example paths: \`Stats.Elo\`, \`Player.Clan\`, \`LastHealth\`, \`Stats.StrikingPower\``
+    );
+    return;
+  }
+
+  const writeResult = await writeProfileStoreEntry({
+    universeId: game.universeId,
+    apiKey: game.apiKey,
+    userId: robloxUser.id,
+    entry  // we pass back the whole envelope so MetaData/GlobalUpdates are untouched
+  });
+
+  if (!writeResult.success) {
+    await interaction.editReply(
+      `❌ Edit failed when saving: ${writeResult.error}\n` +
+      `-# Make sure the API key has **DataStore → Write** permission.`
+    );
+    return;
+  }
 
   await writeAuditAndPost(db, guild, interaction.user.id, "data.edit", {
-    robloxUserId: robloxUser.id,
-    robloxUsername: robloxUser.name,
-    statPath,
-    value: String(value)
+    robloxUserId: robloxUser.id, robloxUsername: robloxUser.name,
+    statPath, value: String(value), method: "datastore (player offline)"
   });
 
   await interaction.editReply(
-    `✅ Edit sent for **${robloxUser.name}**\n` +
+    `✅ **${robloxUser.name}**'s data saved directly to DataStore.\n` +
     `\`${statPath}\` → \`${String(value)}\`\n` +
-    `-# Takes effect immediately if the player is online in the game. Has no effect if they are offline.`
+    `-# Player was offline. Change takes effect the next time they log in.`
   );
 }
 
