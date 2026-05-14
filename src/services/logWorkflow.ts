@@ -77,8 +77,8 @@ type LogActionButton = {
 
 const sessions = new Map<string, LogDraft>();
 const sessionsByUser = new Map<string, string>();
-const SESSION_TTL_MS = 20 * 60 * 1000;
-const DRAFT_STALE_MS = 60 * 60 * 1000;
+// No inactivity TTL — drafts persist until explicitly cancelled, submitted, or 48 h old.
+const DRAFT_STALE_MS = 48 * 60 * 60 * 1000;
 const MAX_MEDIA_LINKS = 20;
 
 // ── Draft persistence ───────────────────────────────────────────────────────
@@ -234,19 +234,25 @@ export function resolveLogAction(value: string | null | undefined) {
 export async function startInteractiveLog(interaction: ChatInputCommandInteraction, db: AppDatabase, member: GuildMember) {
   const guild = interaction.guild!;
 
-  // Check for a recovered draft (loaded from disk after restart — has no active interaction)
+  // If there's already a session for this user (active or recovered from disk), resume it
+  // instead of auto-cancelling. This prevents the "previous pending log cancelled" loop.
+  // The mod can always press Cancel in the log UI to explicitly abandon and start fresh.
   const existingDraftId = sessionsByUser.get(sessionUserKey(guild.id, member.id));
   const existingDraft = existingDraftId ? sessions.get(existingDraftId) : null;
-  if (existingDraft && existingDraft.editReply === null) {
-    await interaction.reply({ ...recoveryPromptPayload(existingDraft), ephemeral: true });
-    // Give the recovery prompt a TTL — without this the draft lives forever in memory
-    // and every subsequent /log call loops back to this same prompt.
-    existingDraft.editReply = (payload) => interaction.editReply(payload);
-    touchDraft(existingDraft);
+  if (existingDraft) {
+    if (existingDraft.editReply === null) {
+      // Recovered from disk after restart — show recovery prompt
+      await interaction.reply({ ...recoveryPromptPayload(existingDraft), ephemeral: true });
+      existingDraft.editReply = (payload) => interaction.editReply(payload);
+      saveDraftToDisk(existingDraft);
+    } else {
+      // Active session — re-bind to this interaction and show current state
+      await interaction.reply({ ...previewPayload(db, existingDraft), ephemeral: true });
+      existingDraft.editReply = (payload) => interaction.editReply(payload);
+      saveDraftToDisk(existingDraft);
+    }
     return;
   }
-
-  await cancelPendingLogForUser(guild.id, member.id, "Previous pending log cancelled because you started a new log.");
 
   const config = db.getGuildConfig(guild.id);
   if (!config.interactiveLogEnabled) {
@@ -262,6 +268,8 @@ export async function startInteractiveLog(interaction: ChatInputCommandInteracti
   const draft = createDraft(guild.id, member.id, interaction.channelId, isHeadMod);
   sessions.set(draft.id, draft);
   sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
+  // Save to disk BEFORE sending the reply so a crash between reply and save doesn't orphan the session.
+  saveDraftToDisk(draft);
   await interaction.reply({ ...previewPayload(db, draft), ephemeral: true });
   draft.editReply = (payload) => interaction.editReply(payload);
   touchDraft(draft);
@@ -595,11 +603,6 @@ export async function handleLogMediaMessage(db: AppDatabase, message: Message) {
   const draft = draftId ? sessions.get(draftId) : null;
   if (!draft || !draft.mediaCaptureEnabled || draft.channelId !== message.channelId) return false;
   if (draft.stage !== "fields") return false;
-  if (Date.now() - draft.updatedAt > SESSION_TTL_MS) {
-    await cancelDraft(draft, "Log automatically cancelled after 20 minutes of inactivity.");
-    return false;
-  }
-
   const prevCount = draft.mediaLinks.length;
   const added = addMediaLinks(draft, message);
   if (added === 0) return false;
@@ -691,11 +694,6 @@ function getDraft(sessionId: string | undefined, interaction: ButtonInteraction 
     void interaction.reply({ content: "That log draft expired. Run `/log` again.", ephemeral: true }).catch(() => null);
     return null;
   }
-  if (Date.now() - draft.updatedAt > SESSION_TTL_MS) {
-    void cancelDraft(draft, "Log automatically cancelled after 20 minutes of inactivity.").catch(() => null);
-    void interaction.reply({ content: "That log draft expired. Run `/log` again.", ephemeral: true }).catch(() => null);
-    return null;
-  }
   if (interaction.guild?.id !== draft.guildId || interaction.user.id !== draft.userId) {
     void interaction.reply({ content: "Only the person who started this log can edit it.", ephemeral: true }).catch(() => null);
     return null;
@@ -760,7 +758,7 @@ function previewPayload(db: AppDatabase, draft: LogDraft) {
     .setColor(colors.voidPurple)
     .setDescription(stageDescription(draft))
     .addFields(fields)
-    .setFooter({ text: "Only one pending log can be active per user. Inactive drafts expire after 20 minutes." });
+    .setFooter({ text: "Only one pending log per user. Drafts are saved and can be resumed any time within 48 hours." });
 
   return {
     content: [
@@ -1419,10 +1417,7 @@ function recoveryPromptPayload(draft: LogDraft) {
 function touchDraft(draft: LogDraft) {
   draft.updatedAt = Date.now();
   saveDraftToDisk(draft);
-  if (draft.timeout) clearTimeout(draft.timeout);
-  draft.timeout = setTimeout(() => {
-    void cancelDraft(draft, "Log automatically cancelled after 20 minutes of inactivity.").catch(() => null);
-  }, SESSION_TTL_MS);
+  // No inactivity timeout — sessions live until the mod cancels/submits or 48 h pass.
 }
 
 async function cancelDraft(draft: LogDraft, reason: string) {
