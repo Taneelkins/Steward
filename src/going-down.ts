@@ -15,8 +15,10 @@ const db = new AppDatabase(env.databasePath, env.defaultTimezone);
 const dataDir = path.dirname(env.databasePath);
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
+const updateNotes = process.argv[2] || undefined;
+
 client.once(Events.ClientReady, async (readyClient) => {
-  await postGoingDown(db, readyClient, dataDir);
+  await postGoingDown(db, readyClient, dataDir, updateNotes);
   console.log("Going-down announcement done.");
   db.close();
   client.destroy();

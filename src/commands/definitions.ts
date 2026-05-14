@@ -142,6 +142,7 @@ export function buildCommands(options: CommandBuildOptions = {}) {
     new SlashCommandBuilder()
       .setName("updatebot")
       .setDescription("Pull the latest code from GitHub and restart the bot.")
+      .addStringOption((o) => o.setName("notes").setDescription("Brief changelog shown in the shouts channel (e.g. 'Fixed X, added Y').").setRequired(false))
       .setDefaultMemberPermissions(ownerDefault),
 
     new SlashCommandBuilder()

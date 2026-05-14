@@ -2097,7 +2097,8 @@ async function handleUpdateBot(interaction: ChatInputCommandInteraction, context
   const summary = [pullOutput.trim(), buildOutput.trim(), deployOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);
   await interaction.editReply(`Update complete. Restarting bot...\n\`\`\`\n${summary}\n\`\`\``);
   const dataDir = require("node:path").dirname(context.env.databasePath);
-  await postGoingDown(context.db, interaction.client, dataDir).catch(() => null);
+  const notes = interaction.options.getString("notes") ?? undefined;
+  await postGoingDown(context.db, interaction.client, dataDir, notes).catch(() => null);
   setTimeout(() => process.exit(75), 500);
 }
 

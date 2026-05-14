@@ -13,6 +13,7 @@ type RestartMessage = { channelId: string; messageId: string };
 type RestartSignal = {
   reason: "crash" | "update";
   exitTime: string;
+  updateNotes?: string;         // brief changelog shown in the shouts channel
   messages?: RestartMessage[]; // present for update restarts — used to edit the "going down" message
 };
 
@@ -51,14 +52,14 @@ export function saveShoutsChannels(db: AppDatabase, client: Client, dataDir: str
 // Call this from anywhere the bot is about to exit for an update (updatebot command,
 // restart-bot.ps1 via going-down.js, etc.).
 
-export async function postGoingDown(db: AppDatabase, client: Client, dataDir: string): Promise<void> {
+export async function postGoingDown(db: AppDatabase, client: Client, dataDir: string, updateNotes?: string): Promise<void> {
   const exitTime = new Date().toISOString();
   const postedMessages: RestartMessage[] = [];
 
   const downEmbed = new EmbedBuilder()
     .setColor(colors.voidPurple)
     .setTitle("🔄 Steward Restarting")
-    .setDescription("Going down for an update. Back online shortly.")
+    .setDescription(`Going down for an update. Back online shortly.${updateNotes ? `\n\n**Changes:** ${updateNotes}` : ""}`)
     .setTimestamp();
 
   for (const guild of client.guilds.cache.values()) {
@@ -74,7 +75,7 @@ export async function postGoingDown(db: AppDatabase, client: Client, dataDir: st
     }
   }
 
-  const signal: RestartSignal = { reason: "update", exitTime, messages: postedMessages.length ? postedMessages : undefined };
+  const signal: RestartSignal = { reason: "update", exitTime, updateNotes, messages: postedMessages.length ? postedMessages : undefined };
   try {
     fs.writeFileSync(path.join(dataDir, "restart-signal.json"), JSON.stringify(signal), "utf8");
   } catch {
@@ -107,7 +108,7 @@ export async function postStartupAnnouncement(db: AppDatabase, client: Client, d
     const backEmbed = new EmbedBuilder()
       .setColor(colors.voidPurple)
       .setTitle("✅ Steward Back Online")
-      .setDescription(`Restarted for an update.\nWas offline for **${offlineStr}**.`)
+      .setDescription(`Restarted for an update. Down for **${offlineStr}**.${signal.updateNotes ? `\n\n**Changes:** ${signal.updateNotes}` : ""}`)
       .setTimestamp();
 
     for (const { channelId, messageId } of signal.messages) {
@@ -139,7 +140,7 @@ export async function postStartupAnnouncement(db: AppDatabase, client: Client, d
       ? new EmbedBuilder()
           .setColor(colors.voidPurple)
           .setTitle("✅ Steward Back Online")
-          .setDescription(`Restarted for an update.\nWas offline for **${offlineStr}**.`)
+          .setDescription(`Restarted for an update. Down for **${offlineStr}**.${signal.updateNotes ? `\n\n**Changes:** ${signal.updateNotes}` : ""}`)
           .setTimestamp()
       : new EmbedBuilder()
           .setColor(0xe74c3c)

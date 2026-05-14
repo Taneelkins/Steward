@@ -1,7 +1,14 @@
-# restart-bot.ps1
+# restart-bot.ps1 [UpdateNotes]
 # Kills any running bot and watcher, then launches a fresh detached watcher.
 # Runs going-down.js first to post a "restarting" embed and capture message IDs,
 # then edits it to "back online" once the bot comes back up.
+#
+# Optional: pass a brief changelog as the first argument.
+# Example: .\restart-bot.ps1 "Fixed double uploading, fixed autopunish display"
+
+param(
+    [string]$UpdateNotes = ""
+)
 
 $botDir     = "C:\Users\Taru\Documents\Bot"
 $node       = "C:\Program Files\nodejs\node.exe"
@@ -26,9 +33,11 @@ Start-Sleep -Seconds 2
 
 # ── Post "going down" embed via Node.js (writes restart-signal.json) ──────────
 Write-Output "Posting going-down announcement..."
+$goingDownArgs = @("dist/going-down.js")
+if ($UpdateNotes -ne "") { $goingDownArgs += $UpdateNotes }
 $goingDownProc = Start-Process `
     -FilePath $node `
-    -ArgumentList "dist/going-down.js" `
+    -ArgumentList $goingDownArgs `
     -WorkingDirectory $botDir `
     -WindowStyle Hidden `
     -Wait `
