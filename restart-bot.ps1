@@ -1,49 +1,45 @@
 # restart-bot.ps1
-# Kills existing bot, starts a background watcher loop.
-# Exit 0 = clean shutdown. Exit 75 = /updatebot signal (restart). Anything else = crash restart.
+# Kills any running bot and watcher, then launches a fresh detached watcher.
+# The watcher runs as a standalone powershell.exe process - it survives this
+# session exiting and automatically restarts the bot on crash or /updatebot.
 
 $botDir = "C:\Users\Taru\Documents\Bot"
-$node   = "C:\Program Files\nodejs\node.exe"
 
 # Kill existing bot process
-$existing = Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like "*dist/index*" -and $_.Name -eq "node.exe" }
-foreach ($p in $existing) {
-    Write-Output "Stopping PID $($p.ProcessId)..."
+$botProcs = Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like "*dist/index*" -and $_.Name -eq "node.exe" }
+foreach ($p in $botProcs) {
+    Write-Output "Stopping bot PID $($p.ProcessId)..."
     Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
 }
 
-# Remove any old watcher job
-Get-Job -Name "BotWatcher" -ErrorAction SilentlyContinue | Remove-Job -Force -ErrorAction SilentlyContinue
+# Kill existing watcher process
+$watcherProcs = Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like "*bot-watcher*" -and $_.Name -eq "powershell.exe" }
+foreach ($p in $watcherProcs) {
+    Write-Output "Stopping watcher PID $($p.ProcessId)..."
+    Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+}
 
 Start-Sleep -Seconds 2
 
-# Watcher loop in a background job
-$job = Start-Job -Name "BotWatcher" -ScriptBlock {
-    param($node, $botDir)
-    while ($true) {
-        $proc = Start-Process -FilePath $node -ArgumentList "dist/index.js" -WorkingDirectory $botDir -WindowStyle Hidden -PassThru
-        $proc.WaitForExit()
-        $code = $proc.ExitCode
-        if ($code -eq 0) {
-            Write-Output "Bot stopped cleanly."
-            break
-        }
-        if ($code -eq 75) {
-            Write-Output "Restarting after /updatebot..."
-        } else {
-            Write-Output "Bot crashed (exit $code). Restarting in 2s..."
-            Start-Sleep -Seconds 2
-        }
-    }
-} -ArgumentList $node, $botDir
+# Launch watcher as a fully detached powershell process.
+# -NoProfile -NonInteractive keeps it lean; -WindowStyle Hidden keeps it invisible.
+# This process outlives the current session - it is NOT a background job.
+Start-Process `
+    -FilePath "powershell.exe" `
+    -ArgumentList "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-File", "`"$botDir\bot-watcher.ps1`"" `
+    -WorkingDirectory $botDir `
+    -WindowStyle Hidden
 
 Start-Sleep -Seconds 5
 
+# Confirm the bot came up
 $botUp = Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like "*dist/index*" -and $_.Name -eq "node.exe" }
+$watcherUp = Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like "*bot-watcher*" -and $_.Name -eq "powershell.exe" }
 
 if ($botUp) {
-    Write-Output "Bot running on PID $($botUp.ProcessId), watcher job $($job.Id) active."
+    $watcherPid = if ($watcherUp) { $watcherUp.ProcessId } else { "unknown" }
+    Write-Output "Bot running on PID $($botUp.ProcessId). Watcher running on PID $watcherPid."
 } else {
-    Write-Output "ERROR: Bot did not start. Check logs/pm2-error.log"
+    Write-Output "ERROR: Bot did not start. Check logs\watcher.log for details."
     exit 1
 }
