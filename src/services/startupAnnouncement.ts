@@ -1,13 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
-import { EmbedBuilder, type Client } from "discord.js";
+import { EmbedBuilder, type Client, type TextChannel, type NewsChannel, type ThreadChannel } from "discord.js";
 import type { AppDatabase } from "../db.js";
 import { colors } from "../utils/theme.js";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type ShoutsEntry = { guildId: string; channelId: string };
+
+type RestartMessage = { channelId: string; messageId: string };
 
 type RestartSignal = {
   reason: "crash" | "update";
   exitTime: string;
+  messages?: RestartMessage[]; // present for update restarts — used to edit the "going down" message
 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatOffline(ms: number): string {
   const totalSecs = Math.round(ms / 1000);
@@ -19,6 +28,25 @@ function formatOffline(ms: number): string {
   const remMins = mins % 60;
   return remMins > 0 ? `${hours}h ${remMins}m` : `${hours}h`;
 }
+
+// ── Save shouts channels to disk ─────────────────────────────────────────────
+// Called on every startup so restart-bot.ps1 can read which channels to post
+// the "going down" embed to without needing to query the SQLite DB itself.
+
+export function saveShoutsChannels(db: AppDatabase, client: Client, dataDir: string): void {
+  const entries: ShoutsEntry[] = [];
+  for (const guild of client.guilds.cache.values()) {
+    const channelId = db.getGuildConfig(guild.id).shoutsChannelId;
+    if (channelId) entries.push({ guildId: guild.id, channelId });
+  }
+  try {
+    fs.writeFileSync(path.join(dataDir, "shouts-channels.json"), JSON.stringify(entries), "utf8");
+  } catch {
+    // non-fatal
+  }
+}
+
+// ── Startup announcement ──────────────────────────────────────────────────────
 
 export async function postStartupAnnouncement(db: AppDatabase, client: Client, dataDir: string) {
   const signalPath = path.join(dataDir, "restart-signal.json");
@@ -38,28 +66,52 @@ export async function postStartupAnnouncement(db: AppDatabase, client: Client, d
   const offlineStr = formatOffline(offlineMs);
   const exitTimestamp = `<t:${Math.floor(exitMs / 1000)}:T>`;
 
-  for (const guild of client.guilds.cache.values()) {
-    const config = db.getGuildConfig(guild.id);
-    const channelId = config.shoutsChannelId;
-    if (!channelId) continue;
+  if (signal.reason === "update" && signal.messages?.length) {
+    // Edit the "going down" message that restart-bot.ps1 already posted
+    const backEmbed = new EmbedBuilder()
+      .setColor(colors.voidPurple)
+      .setTitle("✅ Steward Back Online")
+      .setDescription(`Restarted for an update.\nWas offline for **${offlineStr}**.`)
+      .setTimestamp();
 
+    for (const { channelId, messageId } of signal.messages) {
+      // Find the channel across all guilds
+      let channel: TextChannel | NewsChannel | ThreadChannel | null = null;
+      for (const guild of client.guilds.cache.values()) {
+        const ch = guild.channels.cache.get(channelId);
+        if (ch && (ch.isTextBased()) && "send" in ch) {
+          channel = ch as TextChannel | NewsChannel | ThreadChannel;
+          break;
+        }
+      }
+      if (!channel) continue;
+      await channel.messages.fetch(messageId)
+        .then((msg) => msg.edit({ embeds: [backEmbed] }))
+        .catch(() => (channel as TextChannel | NewsChannel | ThreadChannel).send({ embeds: [backEmbed] }).catch(() => null));
+    }
+    return;
+  }
+
+  // Crash or update with no pre-posted message — post fresh
+  for (const guild of client.guilds.cache.values()) {
+    const channelId = db.getGuildConfig(guild.id).shoutsChannelId;
+    if (!channelId) continue;
     const channel = guild.channels.cache.get(channelId);
     if (!channel?.isTextBased()) continue;
 
-    const embed =
-      signal.reason === "update"
-        ? new EmbedBuilder()
-            .setColor(colors.voidPurple)
-            .setTitle("🔄 Bot Updated")
-            .setDescription("A new update was deployed. Bot has restarted and is back online.")
-            .setTimestamp()
-        : new EmbedBuilder()
-            .setColor(0xe74c3c)
-            .setTitle("⚠️ Bot Restarted After Crash")
-            .setDescription(
-              `Crash detected at ${exitTimestamp}.\nWas offline for **${offlineStr}**.\nBot is back online now.`
-            )
-            .setTimestamp();
+    const embed = signal.reason === "update"
+      ? new EmbedBuilder()
+          .setColor(colors.voidPurple)
+          .setTitle("✅ Steward Back Online")
+          .setDescription(`Restarted for an update.\nWas offline for **${offlineStr}**.`)
+          .setTimestamp()
+      : new EmbedBuilder()
+          .setColor(0xe74c3c)
+          .setTitle("⚠️ Steward Restarted After Crash")
+          .setDescription(
+            `Crash detected at ${exitTimestamp}.\nWas offline for **${offlineStr}**.\nSteward is back online.`
+          )
+          .setTimestamp();
 
     await channel.send({ embeds: [embed] }).catch(() => null);
   }
