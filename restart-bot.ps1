@@ -21,6 +21,21 @@ foreach ($p in $watcherProcs) {
 
 Start-Sleep -Seconds 2
 
+# Deploy slash commands so new options/commands are registered with Discord
+Write-Output "Deploying slash commands..."
+$deployProc = Start-Process `
+    -FilePath "C:\Program Files\nodejs\node.exe" `
+    -ArgumentList "dist/deploy-commands.js" `
+    -WorkingDirectory $botDir `
+    -WindowStyle Hidden `
+    -Wait `
+    -PassThru
+if ($deployProc.ExitCode -ne 0) {
+    Write-Output "WARNING: deploy-commands exited with code $($deployProc.ExitCode) — commands may not be updated."
+} else {
+    Write-Output "Slash commands deployed successfully."
+}
+
 # Launch watcher as a fully detached powershell process.
 # -NoProfile -NonInteractive keeps it lean; -WindowStyle Hidden keeps it invisible.
 # This process outlives the current session - it is NOT a background job.
