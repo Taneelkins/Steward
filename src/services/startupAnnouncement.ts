@@ -40,7 +40,7 @@ export async function postStartupAnnouncement(db: AppDatabase, client: Client, d
 
   for (const guild of client.guilds.cache.values()) {
     const config = db.getGuildConfig(guild.id);
-    const channelId = config.alertChannelId ?? config.stewardLogChannelId;
+    const channelId = config.shoutsChannelId;
     if (!channelId) continue;
 
     const channel = guild.channels.cache.get(channelId);

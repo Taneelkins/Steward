@@ -92,7 +92,8 @@ function buildPanelEmbed(db: AppDatabase, guildId: string): EmbedBuilder {
   // Optional / specialised channels
   const optionalField = [
     ch(config.evidenceArchiveChannelId, "Evidence Archive", true),
-    ch(config.stewardLogChannelId,      "Steward Log",      true)
+    ch(config.stewardLogChannelId,      "Steward Log",      true),
+    ch(config.shoutsChannelId,          "Shouts",           true)
   ].join("\n");
 
   const behaviorField = [
@@ -252,7 +253,7 @@ function buildOptionalModal(db: AppDatabase, guildId: string): ModalBuilder {
     .addComponents(
       ci("evidence_archive", "Evidence Archive",  c.evidenceArchiveChannelId),
       ci("steward_log",      "Steward Log",       c.stewardLogChannelId),
-      ci("appeal_log",       "Appeal Log",        c.appealLogChannelId),
+      ci("shouts",           "Shouts Channel",    c.shoutsChannelId),
       ri("seniorMod",        "Senior Mod Role",   getRole("seniorMod")),
       ri("can_register",     "Can Register Role", c.registrationRoleId)
     );
@@ -399,7 +400,7 @@ export async function handleSetupPanelModal(db: AppDatabase, interaction: ModalS
     const channelMap: Array<[string, string]> = [
       ["evidence_archive", "evidence_archive_channel_id"],
       ["steward_log",      "steward_log_channel_id"],
-      ["appeal_log",       "appeal_log_channel_id"]
+      ["shouts",           "shouts_channel_id"]
     ];
     const chUpdates: Record<string, string | null> = {};
     for (const [fieldId, dbKey] of channelMap) {

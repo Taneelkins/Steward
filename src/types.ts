@@ -46,6 +46,7 @@ export type GuildConfig = {
   autoPunishDisabled: string[];
   loaChannelId: string | null;
   loaLogChannelId: string | null;
+  shoutsChannelId: string | null;
   createdAt: string;
   updatedAt: string;
 };

@@ -873,6 +873,7 @@ export class AppDatabase {
     this.ensureColumn("guild_configs", "auto_punish_disabled_json", "TEXT");
     this.ensureColumn("guild_configs", "loa_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "loa_log_channel_id", "TEXT");
+    this.ensureColumn("guild_configs", "shouts_channel_id", "TEXT");
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
@@ -930,6 +931,7 @@ type GuildConfigRow = {
   auto_punish_disabled_json: string | null;
   loa_channel_id: string | null;
   loa_log_channel_id: string | null;
+  shouts_channel_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1103,6 +1105,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     autoPunishDisabled: parseStringList(row.auto_punish_disabled_json),
     loaChannelId: row.loa_channel_id,
     loaLogChannelId: row.loa_log_channel_id,
+    shoutsChannelId: row.shouts_channel_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
