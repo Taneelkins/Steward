@@ -21,6 +21,12 @@ foreach ($p in $watcherProcs) {
 
 Start-Sleep -Seconds 2
 
+# Write restart signal so the bot announces the update in the shouts channel on startup
+$signalFile = "$botDir\data\restart-signal.json"
+$exitTime = (Get-Date).ToUniversalTime().ToString("o")
+"{`"reason`":`"update`",`"exitTime`":`"$exitTime`"}" | Out-File -FilePath $signalFile -Encoding utf8 -Force
+Write-Output "Restart signal written."
+
 # Deploy slash commands so new options/commands are registered with Discord
 Write-Output "Deploying slash commands..."
 $deployProc = Start-Process `
