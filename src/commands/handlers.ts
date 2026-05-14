@@ -62,6 +62,7 @@ import { deployCommandsForGuild } from "../deploy-commands.js";
 import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, readProfileStoreEntry, sendDataEdit, setNestedValue, unbanRobloxPlayer, writeProfileStoreEntry } from "../services/roblox.js";
 import { buildLoaApprovalButtons, buildLoaRequestEmbed } from "../services/loa.js";
 import { buildSetupPanel } from "../services/setupPanel.js";
+import { postGoingDown } from "../services/startupAnnouncement.js";
 
 export type CommandContext = {
   db: AppDatabase;
@@ -196,7 +197,7 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         await handleBackup(interaction, context, member);
         break;
       case "updatebot":
-        await handleUpdateBot(interaction, member);
+        await handleUpdateBot(interaction, context, member);
         break;
       case "refresh":
         await handleRefresh(interaction, context, member);
@@ -2055,7 +2056,7 @@ function normalizeActionName(value: string) {
     .slice(0, 50);
 }
 
-async function handleUpdateBot(interaction: ChatInputCommandInteraction, member: GuildMember) {
+async function handleUpdateBot(interaction: ChatInputCommandInteraction, context: CommandContext, member: GuildMember) {
   requireServerOwner(member);
   await interaction.deferReply({ ephemeral: true });
 
@@ -2091,7 +2092,9 @@ async function handleUpdateBot(interaction: ChatInputCommandInteraction, member:
 
   const summary = [pullOutput.trim(), buildOutput.trim(), deployOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);
   await interaction.editReply(`Update complete. Restarting bot...\n\`\`\`\n${summary}\n\`\`\``);
-  setTimeout(() => process.exit(75), 1500);
+  const dataDir = require("node:path").dirname(context.env.databasePath);
+  await postGoingDown(context.db, interaction.client, dataDir).catch(() => null);
+  setTimeout(() => process.exit(75), 500);
 }
 
 async function handleConfigCheck(interaction: ChatInputCommandInteraction, db: AppDatabase, guildId: string) {

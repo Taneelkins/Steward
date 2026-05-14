@@ -46,6 +46,42 @@ export function saveShoutsChannels(db: AppDatabase, client: Client, dataDir: str
   }
 }
 
+// ── Going-down announcement ───────────────────────────────────────────────────
+// Posts "Steward Restarting" to every shouts channel and writes restart-signal.json.
+// Call this from anywhere the bot is about to exit for an update (updatebot command,
+// restart-bot.ps1 via going-down.js, etc.).
+
+export async function postGoingDown(db: AppDatabase, client: Client, dataDir: string): Promise<void> {
+  const exitTime = new Date().toISOString();
+  const postedMessages: RestartMessage[] = [];
+
+  const downEmbed = new EmbedBuilder()
+    .setColor(colors.voidPurple)
+    .setTitle("🔄 Steward Restarting")
+    .setDescription("Going down for an update. Back online shortly.")
+    .setTimestamp();
+
+  for (const guild of client.guilds.cache.values()) {
+    const channelId = db.getGuildConfig(guild.id).shoutsChannelId;
+    if (!channelId) continue;
+    const ch = guild.channels.cache.get(channelId);
+    if (!ch?.isTextBased() || !("send" in ch)) continue;
+    try {
+      const msg = await (ch as TextChannel | NewsChannel | ThreadChannel).send({ embeds: [downEmbed] });
+      postedMessages.push({ channelId, messageId: msg.id });
+    } catch {
+      // non-fatal — channel may have restricted perms
+    }
+  }
+
+  const signal: RestartSignal = { reason: "update", exitTime, messages: postedMessages.length ? postedMessages : undefined };
+  try {
+    fs.writeFileSync(path.join(dataDir, "restart-signal.json"), JSON.stringify(signal), "utf8");
+  } catch {
+    // non-fatal
+  }
+}
+
 // ── Startup announcement ──────────────────────────────────────────────────────
 
 export async function postStartupAnnouncement(db: AppDatabase, client: Client, dataDir: string) {
