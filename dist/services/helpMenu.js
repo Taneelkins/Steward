@@ -166,7 +166,7 @@ const helpCommands = [
             "Click **➕ Add Game** to fill in Universe ID, API Key, and a friendly name in a popup form.",
             "Each game shows **🗑️ Remove** and (if multiple games) **Set Default** buttons — click to act instantly, panel refreshes.",
             "Universe ID: open your experience on create.roblox.com — the number in the URL is the ID.",
-            "API Key: create at create.roblox.com/settings/credentials. Select **User API key**. Enable the following — all scoped to your universe: **User Restrictions → Write**, **Messaging Service → Publish**, **Universe Datastore Objects → Read**, **Universe Datastore Objects → Update**. The Datastore permissions are only needed for `/edit` on offline players.",
+            "API Key: create at create.roblox.com/settings/credentials. Select **User API key**. For each permission (**User Restrictions → Write**, **Messaging Service → Publish**, **Universe Datastore Objects → Read**, **Universe Datastore Objects → Update**) you must also click **Add universe** and select your experience — enabling the permission without adding a universe gives 401 errors. Universe Datastore permissions are only needed for `/edit` on offline players.",
             "If only one game is configured it is used automatically. If multiple, use Set Default to pick which one is used for auto-execution from `/log`.",
             "API keys are stored locally in the bot database — treat it as sensitive.",
             "To update a key, add the same Universe ID again — it overwrites."
@@ -414,7 +414,7 @@ const helpCommands = [
             "Run `/config check` after setup to confirm the game is shown under Roblox Game.",
             "Universe ID: open your experience on create.roblox.com — the number in the URL.",
             "API Key: create.roblox.com/settings/credentials → **User API key** (not group) → enable all four permissions below → scope to your universe.",
-            "Required permissions: **User Restrictions → Write** (in-game bans/unbans), **Messaging Service → Publish** (live kick and data edits), **Universe Datastore Objects → Read** and **Universe Datastore Objects → Update** (offline player data editing via `/edit`).",
+            "Required permissions: **User Restrictions → Write**, **Messaging Service → Publish**, **Universe Datastore Objects → Read**, **Universe Datastore Objects → Update**. For each permission you must click **Add universe** and select your experience — the permission alone without a universe scope returns 401.",
             "If you skip DataStore permissions, `/edit` will still work for online players but will fail on offline players with a permission error.",
             "Once saved: `/ingameban` works, Ingame ban logs via `/log` auto-ban, accepted Ingame Ban appeal logs auto-unban.",
             "Junior mod ingame bans wait for senior review approval before executing.",
