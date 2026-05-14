@@ -194,8 +194,7 @@ function loadDraftsFromDisk() {
 
 /**
  * Scan every draft file looking for one whose id field matches sessionId.
- * Used as a fallback when a session is not in the in-memory map — e.g. when the
- * bot restarted and the mod clicks a button from an old message before running /log.
+ * First fallback when a session is not in the in-memory map.
  */
 function loadDraftBySessionId(sessionId: string): LogDraft | null {
   if (!draftsDir) return null;
@@ -211,16 +210,41 @@ function loadDraftBySessionId(sessionId: string): LogDraft | null {
         return null;
       }
       const draft: LogDraft = { ...data, statusMessage: null, timeout: null, editReply: null };
-      // Remove any previous draft for this user so sessionsByUser stays consistent
       const prevId = sessionsByUser.get(sessionUserKey(draft.guildId, draft.userId));
       if (prevId && prevId !== draft.id) sessions.delete(prevId);
       sessions.set(draft.id, draft);
       sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
-      console.log(`[drafts] Lazy-loaded draft ${draft.id} for user ${draft.userId} from disk`);
+      console.log(`[drafts] Lazy-loaded draft ${draft.id} by session ID from disk`);
       return draft;
     } catch { continue; }
   }
   return null;
+}
+
+/**
+ * Load the current draft for a user by guild+user ID, ignoring session ID.
+ * Last-resort fallback when the button's session ID is completely stale — e.g. the
+ * bot restarted and the disk now has a NEWER draft with a different session ID.
+ * This ensures the mod's current in-progress log is always recoverable from any button.
+ */
+function loadDraftByUser(guildId: string, userId: string): LogDraft | null {
+  if (!draftsDir) return null;
+  const filePath = draftFilePath(guildId, userId);
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const data = JSON.parse(raw) as SerializedDraft;
+    if (Date.now() - data.updatedAt > DRAFT_STALE_MS) {
+      try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+      return null;
+    }
+    const draft: LogDraft = { ...data, statusMessage: null, timeout: null, editReply: null };
+    const prevId = sessionsByUser.get(sessionUserKey(guildId, userId));
+    if (prevId && prevId !== draft.id) sessions.delete(prevId);
+    sessions.set(draft.id, draft);
+    sessionsByUser.set(sessionUserKey(guildId, userId), draft.id);
+    console.log(`[drafts] Lazy-loaded draft ${draft.id} by user lookup from disk`);
+    return draft;
+  } catch { return null; }
 }
 
 const logActions: LogActionButton[] = [
@@ -384,16 +408,13 @@ export async function handleLogButton(db: AppDatabase, interaction: ButtonIntera
 
   // Recovery actions bypass the normal TTL check — draft may be older than 5 min after a restart
   if (action === "recover") {
-    const recoveredDraft = (sessionId ? (sessions.get(sessionId) ?? loadDraftBySessionId(sessionId)) : null);
+    const guild2 = interaction.guild!;
+    const userId2 = (interaction.member as GuildMember).id;
+    const recoveredDraft =
+      (sessionId ? (sessions.get(sessionId) ?? loadDraftBySessionId(sessionId)) : null) ??
+      loadDraftByUser(guild2.id, userId2);
     if (!recoveredDraft) {
-      // The draft for this specific button is gone (TTL fired or already resumed elsewhere).
-      // Clean up any other stale recovery draft for this user so `/log` doesn't loop back.
-      const guild2 = interaction.guild!;
-      const userId2 = (interaction.member as GuildMember).id;
-      const otherDraftId = sessionsByUser.get(sessionUserKey(guild2.id, userId2));
-      const otherDraft = otherDraftId ? sessions.get(otherDraftId) : null;
-      if (otherDraft && otherDraft.editReply === null) removeDraft(otherDraft);
-      await interaction.update({ content: "That recovery draft expired. Use `/log` to start a new log.", embeds: [], components: [] });
+      await interaction.update({ content: "No active log draft found. Use `/log` to start a new log.", embeds: [], components: [] });
       return true;
     }
     if (value === "dismiss") {
@@ -715,14 +736,20 @@ function createDraft(guildId: string, userId: string, channelId: string | null, 
 }
 
 function getDraft(sessionId: string | undefined, interaction: ButtonInteraction | ModalSubmitInteraction) {
-  // Check in-memory first, then fall back to disk so button clicks work even after a bot restart
-  // without requiring the mod to run /log first.
-  const draft = (sessionId ? (sessions.get(sessionId) ?? loadDraftBySessionId(sessionId)) : null);
+  // 1. In-memory lookup
+  // 2. Scan disk by session ID (handles restart where mod clicks before running /log)
+  // 3. Load by guild+user (handles stale session ID where disk has a NEWER draft)
+  const guildId = interaction.guild?.id;
+  const userId = interaction.user.id;
+  const draft =
+    (sessionId ? (sessions.get(sessionId) ?? loadDraftBySessionId(sessionId)) : null) ??
+    (guildId ? loadDraftByUser(guildId, userId) : null);
+
   if (!draft) {
     void interaction.reply({ content: "That log draft expired. Run `/log` again.", ephemeral: true }).catch(() => null);
     return null;
   }
-  if (interaction.guild?.id !== draft.guildId || interaction.user.id !== draft.userId) {
+  if (draft.guildId !== guildId || draft.userId !== userId) {
     void interaction.reply({ content: "Only the person who started this log can edit it.", ephemeral: true }).catch(() => null);
     return null;
   }
