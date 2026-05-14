@@ -1159,7 +1159,7 @@ async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draf
       ?? (draft.transcriptUrl ? "See transcript." : null);
 
     const config = db.getGuildConfig(draft.guildId);
-    const archivedLinks = config.evidenceArchiveChannelId && draft.mediaLinks.length > 0
+    const archivedLinks = config.evidenceArchiveChannelId && draft.mediaLinks.some((l) => l.sourceUrl)
       ? await archiveMediaLinks(interaction.guild!, config.evidenceArchiveChannelId, draft.mediaLinks, interaction.user.id)
       : draft.mediaLinks;
 
