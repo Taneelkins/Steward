@@ -6,15 +6,15 @@ import { staffRoleSpecs } from "./provisioning.js";
 import { colors } from "../utils/theme.js";
 // ── Snowflake parser ──────────────────────────────────────────────────────────
 // Returns:
-//   string   → valid ID parsed from the input (save it)
-//   null     → field was cleared (clear the value)
+//   string    → valid ID parsed from the input (save it)
+//   null      → field was cleared (clear the value)
 //   undefined → invalid / unparseable input (skip, don't touch)
 function parseSnowflake(raw) {
     const trimmed = raw.trim();
     if (!trimmed)
-        return null; // explicitly cleared
+        return null;
     const match = trimmed.match(/<[#@&]+(\d{17,20})>/) ?? trimmed.match(/^(\d{17,20})$/);
-    return match ? match[1] : undefined; // unrecognised → skip
+    return match ? match[1] : undefined;
 }
 // ── Panel embed ───────────────────────────────────────────────────────────────
 function buildPanelEmbed(db, guildId) {
@@ -27,23 +27,28 @@ function buildPanelEmbed(db, guildId) {
         { key: "staff", label: "Staff" },
         { key: "juniorMod", label: "Junior Mod" },
         { key: "mod", label: "Normal Mod" },
+        { key: "seniorMod", label: "Senior Mod" },
         { key: "headMod", label: "Head Mod" },
         { key: "communityManager", label: "Community Manager" }
     ];
     const rolesField = [
         ...tierLabels.map(({ key, label }) => {
             const found = staffRoles.find((r) => r.key === key);
-            return found ? `✅ **${label}:** <@&${found.roleId}>` : `❌ **${label}:** Not set`;
+            return found ? `✅ **${label}:** <@&${found.roleId}>` : `⬜ **${label}:** Not set`;
         }),
         rl(config.registrationRoleId, "Can Register")
     ].join("\n");
+    // Core log channels (set via action_log_channels table)
     const logChannelsField = [
         ch(db.getActionLogChannelId(guildId, "ban"), "Ingame Ban"),
         ch(db.getActionLogChannelId(guildId, "strike"), "Strike"),
         ch(db.getActionLogChannelId(guildId, "restore"), "Restore"),
         ch(db.getActionLogChannelId(guildId, "discord"), "Discord"),
-        ch(db.getActionLogChannelId(guildId, "ticket"), "Ticket")
+        ch(db.getActionLogChannelId(guildId, "ticket"), "Ticket"),
+        ch(config.appealLogChannelId ?? db.getActionLogChannelId(guildId, "appeal"), "Appeal"),
+        ch(config.actionLogChannelId, "Action Log (fallback)")
     ].join("\n");
+    // Core operational channels
     const channelsField = [
         ch(config.alertChannelId, "Alerts"),
         ch(config.auditChannelId, "Audit"),
@@ -51,6 +56,7 @@ function buildPanelEmbed(db, guildId) {
         ch(config.juniorHelpChannelId, "Junior Help", true),
         ch(config.quotaChannelId, "Quota Board", true)
     ].join("\n");
+    // Secondary channels
     const moreField = [
         ch(config.quotaAlertChannelId, "Quota Alerts", true),
         ch(config.staffRegistrationChannelId, "Staff Registration", true),
@@ -58,23 +64,27 @@ function buildPanelEmbed(db, guildId) {
         ch(config.loaLogChannelId, "LOA Log", true),
         ch(config.ticketTranscriptChannelId, "Ticket Transcripts", true)
     ].join("\n");
+    // Optional / specialised channels
+    const optionalField = [
+        ch(config.evidenceArchiveChannelId, "Evidence Archive", true),
+        ch(config.stewardLogChannelId, "Steward Log", true)
+    ].join("\n");
     const behaviorField = [
         tog(config.interactiveLogEnabled, "Interactive Log"),
         tog(config.approvalEnabled, "CM Approval Flow"),
         tog(config.pointsEnabled, "Point System"),
         tog(config.quotaEnabled, "Quota")
     ].join("\n");
-    const allLines = [rolesField, logChannelsField, channelsField, moreField]
-        .join("\n")
-        .split("\n");
-    const missing = allLines.filter((l) => l.startsWith("❌")).length;
+    // Count critical (non-optional) missing items for the title
+    const criticalLines = [logChannelsField, channelsField].join("\n").split("\n");
+    const missing = criticalLines.filter((l) => l.startsWith("❌")).length;
     const title = missing === 0
         ? "✅ All critical configs are set"
         : `⚠️ ${missing} critical item${missing !== 1 ? "s" : ""} not set`;
     return new EmbedBuilder()
         .setTitle(title)
         .setColor(missing === 0 ? 0x2ecc71 : colors.voidPurple)
-        .addFields({ name: "🎭 Roles", value: rolesField, inline: false }, { name: "📋 Log Channels", value: logChannelsField, inline: false }, { name: "📌 Channels", value: channelsField, inline: false }, { name: "📌 More Channels", value: moreField, inline: false }, { name: "⚙️ Behavior", value: behaviorField, inline: false })
+        .addFields({ name: "🎭 Roles", value: rolesField, inline: false }, { name: "📋 Log Channels", value: logChannelsField, inline: false }, { name: "📌 Channels", value: channelsField, inline: false }, { name: "📌 More Channels", value: moreField, inline: false }, { name: "📌 Optional Channels", value: optionalField, inline: false }, { name: "⚙️ Behavior", value: behaviorField, inline: false })
         .setFooter({ text: "✅ = set   ❌ = missing   ⬜ = optional — click a button below to edit" })
         .setTimestamp();
 }
@@ -86,8 +96,11 @@ export function buildSetupPanel(db, guildId, userId) {
         .setLabel(`${on ? "✅" : "❌"} ${label}`)
         .setStyle(on ? ButtonStyle.Success : ButtonStyle.Danger);
     const components = [
-        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`cfg_panel:modal:roles:${userId}`).setLabel("🎭 Roles").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`cfg_panel:modal:log_ch:${userId}`).setLabel("📋 Log Channels").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`cfg_panel:modal:core_ch:${userId}`).setLabel("📌 Channels").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`cfg_panel:modal:extra_ch:${userId}`).setLabel("📌 More").setStyle(ButtonStyle.Secondary)),
+        // Row 1 — modal buttons (5 slots, all used)
+        new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`cfg_panel:modal:roles:${userId}`).setLabel("🎭 Roles").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`cfg_panel:modal:log_ch:${userId}`).setLabel("📋 Log Channels").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`cfg_panel:modal:core_ch:${userId}`).setLabel("📌 Channels").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`cfg_panel:modal:extra_ch:${userId}`).setLabel("📌 More").setStyle(ButtonStyle.Secondary), new ButtonBuilder().setCustomId(`cfg_panel:modal:optional:${userId}`).setLabel("📌 Optional").setStyle(ButtonStyle.Secondary)),
+        // Row 2 — behavior toggles
         new ActionRowBuilder().addComponents(togBtn("interactive_log", "Interactive Log", config.interactiveLogEnabled), togBtn("cm_approval", "CM Approval", config.approvalEnabled), togBtn("points", "Points", config.pointsEnabled), togBtn("quota", "Quota", config.quotaEnabled)),
+        // Row 3 — close
         new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`cfg_panel:close:${userId}`).setLabel("Close").setStyle(ButtonStyle.Danger))
     ];
     return { embeds: [buildPanelEmbed(db, guildId)], components };
@@ -144,6 +157,15 @@ function buildExtraChannelsModal(db, guildId) {
         .setTitle("Edit More Channels")
         .addComponents(ci("quota_alerts", "Quota Alerts", c.quotaAlertChannelId), ci("staff_reg", "Staff Registration", c.staffRegistrationChannelId), ci("loa", "LOA Approval", c.loaChannelId), ci("loa_log", "LOA Log", c.loaLogChannelId), ci("ticket_transcripts", "Ticket Transcripts", c.ticketTranscriptChannelId));
 }
+function buildOptionalModal(db, guildId) {
+    const c = db.getGuildConfig(guildId);
+    const staffRoles = db.listStaffRoles(guildId);
+    const getRole = (key) => staffRoles.find((r) => r.key === key)?.roleId ?? null;
+    return new ModalBuilder()
+        .setCustomId("cfg_panel:modal:optional")
+        .setTitle("Edit Optional / Extra Config")
+        .addComponents(ci("evidence_archive", "Evidence Archive", c.evidenceArchiveChannelId), ci("steward_log", "Steward Log", c.stewardLogChannelId), ci("appeal_log", "Appeal Log", c.appealLogChannelId), ri("seniorMod", "Senior Mod Role", getRole("seniorMod")), ri("can_register", "Can Register Role", c.registrationRoleId));
+}
 // ── Button handler ────────────────────────────────────────────────────────────
 export async function handleSetupPanelButton(db, interaction) {
     if (!interaction.customId.startsWith("cfg_panel:"))
@@ -187,6 +209,8 @@ export async function handleSetupPanelButton(db, interaction) {
             modal = buildCoreChannelsModal(db, guildId);
         else if (key === "extra_ch")
             modal = buildExtraChannelsModal(db, guildId);
+        else if (key === "optional")
+            modal = buildOptionalModal(db, guildId);
         else
             return false;
         await interaction.showModal(modal);
@@ -226,7 +250,6 @@ export async function handleSetupPanelModal(db, interaction) {
          ON CONFLICT(guild_id, role_id) DO UPDATE SET
            role_key = excluded.role_key, name = excluded.name,
            level = excluded.level, is_admin = excluded.is_admin, updated_at = excluded.updated_at`, guildId, id, key, spec.name, spec.level, spec.isAdmin ? 1 : 0, nowIso(), nowIso());
-            // Remove any old entry for this key pointing to a different role
             db.run("DELETE FROM staff_roles WHERE guild_id = ? AND role_key = ? AND role_id <> ?", guildId, key, id);
         }
         await writeAuditAndPost(db, interaction.guild, interaction.user.id, "config.roles.updated", { via: "setup_panel" });
@@ -277,6 +300,45 @@ export async function handleSetupPanelModal(db, interaction) {
         if (Object.keys(updates).length)
             db.updateGuildConfig(guildId, updates);
         await writeAuditAndPost(db, interaction.guild, interaction.user.id, "config.channels.updated", { via: "setup_panel", type: "extra_channels" });
+    }
+    if (section === "optional") {
+        // Channels
+        const channelMap = [
+            ["evidence_archive", "evidence_archive_channel_id"],
+            ["steward_log", "steward_log_channel_id"],
+            ["appeal_log", "appeal_log_channel_id"]
+        ];
+        const chUpdates = {};
+        for (const [fieldId, dbKey] of channelMap) {
+            const id = parseSnowflake(f(fieldId));
+            if (id !== undefined)
+                chUpdates[dbKey] = id;
+        }
+        if (Object.keys(chUpdates).length)
+            db.updateGuildConfig(guildId, chUpdates);
+        // Roles — seniorMod and canRegister
+        const seniorId = parseSnowflake(f("seniorMod"));
+        if (seniorId !== undefined) {
+            if (seniorId === null) {
+                db.run("DELETE FROM staff_roles WHERE guild_id = ? AND role_key = ?", guildId, "seniorMod");
+            }
+            else {
+                const spec = staffRoleSpecs.find((s) => s.key === "seniorMod");
+                if (spec) {
+                    db.run(`INSERT INTO staff_roles (guild_id, role_id, role_key, name, level, is_admin, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(guild_id, role_id) DO UPDATE SET
+               role_key = excluded.role_key, name = excluded.name,
+               level = excluded.level, is_admin = excluded.is_admin, updated_at = excluded.updated_at`, guildId, seniorId, "seniorMod", spec.name, spec.level, spec.isAdmin ? 1 : 0, nowIso(), nowIso());
+                    db.run("DELETE FROM staff_roles WHERE guild_id = ? AND role_key = ? AND role_id <> ?", guildId, "seniorMod", seniorId);
+                }
+            }
+        }
+        const canRegisterId = parseSnowflake(f("can_register"));
+        if (canRegisterId !== undefined) {
+            db.updateGuildConfig(guildId, { registration_role_id: canRegisterId });
+        }
+        await writeAuditAndPost(db, interaction.guild, interaction.user.id, "config.optional.updated", { via: "setup_panel" });
     }
     // Refresh the original panel message
     await interaction.deferUpdate().catch(() => null);
