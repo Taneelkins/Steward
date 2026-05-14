@@ -694,6 +694,9 @@ export async function handleLogMediaMessage(db: AppDatabase, message: Message) {
       }
     }
     draft.statusMessage = null;
+    // Persist the updated mediaLinks (sourceUrl cleared on archived items) so that
+    // if the bot crashes and reloads from disk, submit-time archiving won't re-upload.
+    saveDraftToDisk(draft);
   }
 
   if (draft.editReply) {
