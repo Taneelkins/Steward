@@ -200,6 +200,8 @@ export function configSummaryEmbed(
       { name: "Approval Channel", value: config.approvalChannelId ? `<#${config.approvalChannelId}>` : "Not set", inline: true },
       { name: "Junior Help", value: config.juniorHelpChannelId ? `<#${config.juniorHelpChannelId}>` : "Not set", inline: true },
       { name: "Steward Actions", value: config.stewardLogChannelId ? `<#${config.stewardLogChannelId}>` : "Not set", inline: true },
+      { name: "LOA Approval", value: config.loaChannelId ? `<#${config.loaChannelId}>` : "Not set", inline: true },
+      { name: "LOA Log", value: config.loaLogChannelId ? `<#${config.loaLogChannelId}>` : "Not set", inline: true },
       { name: "Roblox Game", value: robloxValue, inline: true },
       { name: "Timezone", value: config.timezone, inline: true },
       { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true },

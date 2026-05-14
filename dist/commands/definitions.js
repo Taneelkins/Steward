@@ -82,6 +82,7 @@ export function buildCommands(options = {}) {
         robloxCommand(),
         autopunishCommand(),
         editCommand(),
+        loaCommand(),
         new SlashCommandBuilder()
             .setName("lookup")
             .setDescription("Search all case logs by target identity.")
@@ -159,6 +160,8 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "junior_help", "Junior Mod review channel (logs posted here for approve/deny before going live)."))
         .addChannelOption((option) => textChannelOption(option, "evidence_archive", "Channel where media evidence attachments are archived."))
         .addChannelOption((option) => textChannelOption(option, "steward_log", "Steward action log channel (auto-posted on every executed punishment)."))
+        .addChannelOption((option) => textChannelOption(option, "loa_channel", "LOA approval channel (requests are posted here for Head Mod+ to review)."))
+        .addChannelOption((option) => textChannelOption(option, "loa_log_channel", "LOA log channel (approved LOAs are posted here)."))
         .addUserOption((option) => option.setName("owner").setDescription("Owner/admin DM target."))
         .addStringOption((option) => option.setName("ticket_tool_bot_id").setDescription("Ticket Tool bot user ID.")))
         .addSubcommand((sub) => sub
@@ -430,6 +433,17 @@ function autopunishCommand() {
         .setName("autopunish")
         .setDescription("View or toggle automatic punishment execution for different log types.")
         .setDefaultMemberPermissions(headDefault);
+}
+function loaCommand() {
+    return new SlashCommandBuilder()
+        .setName("loa")
+        .setDescription("Leave of Absence — request time off from quota requirements.")
+        .addSubcommand((sub) => sub
+        .setName("request")
+        .setDescription("Submit an LOA request for approval by Head Mod+.")
+        .addStringOption((option) => option.setName("reason").setDescription("Reason for your LOA.").setRequired(true).setMaxLength(500))
+        .addStringOption((option) => option.setName("duration").setDescription("How long you need off, e.g. 2 weeks, 1 month, 14 days.").setRequired(true)))
+        .setDefaultMemberPermissions(juniorDefault);
 }
 function editCommand() {
     return new SlashCommandBuilder()

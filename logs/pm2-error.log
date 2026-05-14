@@ -1,2 +1,8 @@
 (node:23788) ExperimentalWarning: SQLite is an experimental feature and might change at any time
 (Use `node --trace-warnings ...` to show where the warning was created)
+(node:23788) Warning: Supplying "ephemeral" for interaction response options is deprecated. Utilize flags instead.
+[log] command error: Error: Set action_type for Discord logs, like ban, warn, mute, or timeout.
+    at handleLog (file:///C:/Users/Taru/Documents/Bot/dist/commands/handlers.js:289:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async handleChatInputCommand (file:///C:/Users/Taru/Documents/Bot/dist/commands/handlers.js:48:17)
+    at async Client.<anonymous> (file:///C:/Users/Taru/Documents/Bot/dist/index.js:149:5)

@@ -155,6 +155,31 @@ export class AppDatabase {
         });
         return true;
     }
+    // ── LOA Requests ───────────────────────────────────────────────────────────
+    createLoaRequest(values) {
+        const now = nowIso();
+        const result = this.run(`INSERT INTO loa_requests (guild_id, user_id, username, reason, duration_text, expires_at, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`, values.guildId, values.userId, values.username, values.reason, values.durationText, values.expiresAt, now, now);
+        return result.lastInsertRowid;
+    }
+    getLoaRequest(id) {
+        const row = this.get("SELECT * FROM loa_requests WHERE id = ?", id);
+        return row ? mapLoaRequest(row) : undefined;
+    }
+    updateLoaRequest(id, values) {
+        const fields = { updated_at: nowIso() };
+        if (values.status !== undefined)
+            fields["status"] = values.status;
+        if ("approvalMessageId" in values)
+            fields["approval_message_id"] = values.approvalMessageId;
+        if ("approvalChannelId" in values)
+            fields["approval_channel_id"] = values.approvalChannelId;
+        if ("approvedBy" in values)
+            fields["approved_by"] = values.approvedBy;
+        const entries = Object.entries(fields);
+        const assignments = entries.map(([k]) => `${k} = ?`).join(", ");
+        this.run(`UPDATE loa_requests SET ${assignments} WHERE id = ?`, ...entries.map(([, v]) => v), id);
+    }
     isLinkedCommunityServer(guildId) {
         return Boolean(this.get("SELECT 1 FROM guild_configs WHERE linked_guild_id = ?", guildId));
     }
@@ -424,6 +449,22 @@ export class AppDatabase {
         PRIMARY KEY (guild_id, user_id)
       );
 
+      CREATE TABLE IF NOT EXISTS loa_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        duration_text TEXT NOT NULL,
+        expires_at TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        approval_message_id TEXT,
+        approval_channel_id TEXT,
+        approved_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS role_quotas (
         guild_id TEXT NOT NULL,
         role_id TEXT NOT NULL,
@@ -620,6 +661,8 @@ export class AppDatabase {
         this.ensureColumn("moderation_cases", "log_channel_id", "TEXT");
         this.ensureColumn("roblox_games", "is_default", "INTEGER NOT NULL DEFAULT 0");
         this.ensureColumn("guild_configs", "auto_punish_disabled_json", "TEXT");
+        this.ensureColumn("guild_configs", "loa_channel_id", "TEXT");
+        this.ensureColumn("guild_configs", "loa_log_channel_id", "TEXT");
     }
     ensureColumn(table, column, definition) {
         const columns = this.all(`PRAGMA table_info(${table})`);
@@ -675,6 +718,8 @@ function mapGuildConfig(row) {
         multiplierEndsAt: row.multiplier_ends_at,
         lastTranscriptMessageId: row.last_transcript_message_id,
         autoPunishDisabled: parseStringList(row.auto_punish_disabled_json),
+        loaChannelId: row.loa_channel_id,
+        loaLogChannelId: row.loa_log_channel_id,
         createdAt: row.created_at,
         updatedAt: row.updated_at
     };
@@ -827,6 +872,23 @@ function mapRobloxGame(row) {
         apiKey: row.api_key,
         name: row.name,
         isDefault: Boolean(row.is_default),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+    };
+}
+function mapLoaRequest(row) {
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        username: row.username,
+        reason: row.reason,
+        durationText: row.duration_text,
+        expiresAt: row.expires_at,
+        status: row.status,
+        approvalMessageId: row.approval_message_id,
+        approvalChannelId: row.approval_channel_id,
+        approvedBy: row.approved_by,
         createdAt: row.created_at,
         updatedAt: row.updated_at
     };

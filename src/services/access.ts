@@ -35,6 +35,7 @@ export const commandAccess: Record<string, CommandAccess> = {
   roblox: "head",
   autopunish: "head",
   edit: "community",
+  loa: "junior",
   action: "head",
   addpoints: "head",
   removepoints: "head",

@@ -9,6 +9,7 @@ import { AppDatabase } from "./db.js";
 import { assertRuntimeEnv, readEnv } from "./env.js";
 import { deployCommands, deployCommandsForGuild } from "./deploy-commands.js";
 import { handleChatInputCommand, handleRobloxButton, handleRobloxModal, handleAutoPunishButton } from "./commands/handlers.js";
+import { handleLoaButton } from "./services/loa.js";
 import { runStartupRecovery, startScheduler } from "./scheduler.js";
 import { handlePotentialTranscript } from "./services/tickets.js";
 import { handleLogButton, handleLogMediaMessage, handleLogModal, injectDraftFromDeniedCase, initDraftPersistence } from "./services/logWorkflow.js";
@@ -127,6 +128,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return true;
     });
     if (autopunishHandled) return;
+
+    const loaHandled = await handleLoaButton(db, interaction).catch(async (error) => {
+      const message = error instanceof Error ? error.message : "Something went wrong.";
+      if (interaction.replied || interaction.deferred) {
+        await interaction.editReply(`Error: ${message}`).catch(() => null);
+      } else {
+        await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+      }
+      return true;
+    });
+    if (loaHandled) return;
   }
 
   if (interaction.isModalSubmit()) {

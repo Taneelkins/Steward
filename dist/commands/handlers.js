@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } from "discord.js";
 import { formatMultiplier, formatPoints, listOrNone, pointsToMilli, truncate } from "../utils/format.js";
-import { canUseAccess, caseLinkComponents, commandDeniedMessage, configSummaryEmbed, hasCanRegisterRole, postToConfiguredChannel, requireAdmin, requireMod } from "../utils/discord.js";
+import { canUseAccess, caseLinkComponents, commandDeniedMessage, configSummaryEmbed, getTextChannel, hasCanRegisterRole, postToConfiguredChannel, requireAdmin, requireMod } from "../utils/discord.js";
 import { dayName, discordTimestamp, nowIso, parseDateInput, parseTime, parseWeekday } from "../utils/time.js";
 import { writeAuditAndPost } from "../services/audit.js";
 import { commandAccess } from "../services/access.js";
@@ -15,6 +15,7 @@ import { normalizeTicketType, processOverdueTickets } from "../services/tickets.
 import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
 import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, readProfileStoreEntry, sendDataEdit, setNestedValue, unbanRobloxPlayer, writeProfileStoreEntry } from "../services/roblox.js";
+import { buildLoaApprovalButtons, buildLoaRequestEmbed } from "../services/loa.js";
 export async function handleChatInputCommand(interaction, context) {
     if (!interaction.guild || !interaction.member) {
         await interaction.reply({ content: "This bot only works inside a server.", ephemeral: true });
@@ -113,6 +114,9 @@ export async function handleChatInputCommand(interaction, context) {
             case "edit":
                 await handleEdit(interaction, context, member);
                 break;
+            case "loa":
+                await handleLoa(interaction, context, member);
+                break;
             case "multiplier":
                 await handleMultiplier(interaction, context, member);
                 break;
@@ -160,6 +164,9 @@ export async function handleChatInputCommand(interaction, context) {
                 break;
             case "edit":
                 await handleEdit(interaction, context, member);
+                break;
+            case "loa":
+                await handleLoa(interaction, context, member);
                 break;
             default:
                 await interaction.reply({ content: "Unknown command.", ephemeral: true });
@@ -448,7 +455,9 @@ async function handleConfig(interaction, { db }, member) {
         evidence_archive_channel_id: getTextChannelOption(interaction, "evidence_archive")?.id,
         steward_log_channel_id: getTextChannelOption(interaction, "steward_log")?.id,
         owner_user_id: interaction.options.getUser("owner")?.id,
-        ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined
+        ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined,
+        loa_channel_id: getTextChannelOption(interaction, "loa_channel")?.id,
+        loa_log_channel_id: getTextChannelOption(interaction, "loa_log_channel")?.id
     };
     db.updateGuildConfig(guild.id, values);
     await upsertQuotaStatusMessage(db, guild);
@@ -805,6 +814,53 @@ async function handleIngameUnban(interaction, { db }, member) {
         robloxUserId: robloxUser.id, robloxUsername: robloxUser.name, universeId: game.universeId, gameName: game.name
     });
     await interaction.editReply(`✅ **${robloxUser.name}** (ID: ${robloxUser.id}) unbanned from **${game.name}**.`);
+}
+// ── /loa ─────────────────────────────────────────────────────────────────────
+async function handleLoa(interaction, { db }, member) {
+    if (!canUseAccess(db, member, "junior"))
+        throw new Error(commandDeniedMessage("junior"));
+    const guild = interaction.guild;
+    const config = db.getGuildConfig(guild.id);
+    if (!config.loaChannelId) {
+        throw new Error("No LOA approval channel is configured. Ask an admin to set one via `/config channels loa_channel:`.");
+    }
+    const subcommand = interaction.options.getSubcommand();
+    if (subcommand !== "request")
+        return;
+    const reason = interaction.options.getString("reason", true);
+    const durText = interaction.options.getString("duration", true).trim();
+    // Parse duration into seconds using the existing roblox duration parser
+    const durationSeconds = parseRobloxDuration(durText);
+    if (durationSeconds === null) {
+        throw new Error(`Could not parse duration \`${durText}\`. Try something like \`2 weeks\`, \`1 month\`, or \`14 days\`.`);
+    }
+    const expiresAt = durationSeconds !== undefined
+        ? new Date(Date.now() + durationSeconds * 1000).toISOString()
+        : null;
+    const loaId = db.createLoaRequest({
+        guildId: guild.id,
+        userId: member.id,
+        username: member.user.tag,
+        reason,
+        durationText: durText,
+        expiresAt
+    });
+    const request = db.getLoaRequest(loaId);
+    const embed = buildLoaRequestEmbed(request);
+    const row = buildLoaApprovalButtons(loaId);
+    const loaChannel = await getTextChannel(guild, config.loaChannelId);
+    if (!loaChannel) {
+        throw new Error("The configured LOA channel could not be found. Please update it in `/config channels`.");
+    }
+    const msg = await loaChannel.send({ embeds: [embed], components: [row] });
+    db.updateLoaRequest(loaId, {
+        approvalMessageId: msg.id,
+        approvalChannelId: loaChannel.id
+    });
+    await interaction.reply({
+        content: `Your LOA request has been submitted for review in <#${loaChannel.id}>. You will receive a DM when it is approved or denied.`,
+        ephemeral: true
+    });
 }
 // ── /edit ─────────────────────────────────────────────────────────────────────
 /**

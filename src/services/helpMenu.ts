@@ -357,6 +357,29 @@ const helpCommands: HelpCommand[] = [
     ]
   },
   {
+    id: "loa",
+    label: "/loa",
+    access: "junior",
+    levels: ["junior", "moderator", "senior", "admin"],
+    what: "Submit a Leave of Absence request for Head Mod review.",
+    who: "Junior Moderator and above.",
+    usage: ["`/loa request reason:<reason> duration:<duration>`"],
+    examples: [
+      "`/loa request reason:Personal trip duration:1 week`",
+      "`/loa request reason:Burnout duration:2 weeks`",
+      "`/loa request reason:Vacation duration:permanent`"
+    ],
+    notes: [
+      "The request is posted to the configured LOA approval channel with Approve and Deny buttons for Head Mods.",
+      "Duration accepts natural language: `3 days`, `1 week`, `2 weeks`, `permanent`, `indefinite`, etc.",
+      "If approved, you are automatically exempt from quota requirements for the duration and receive a DM confirmation.",
+      "If denied, you receive a DM letting you know. Contact a Head Mod if you have questions.",
+      "A Head Mod or above must approve the request — it is not instant.",
+      "The approval channel must be configured by an admin via `/config channels loa_channel:#channel`.",
+      "LOA approvals are also posted to a separate log channel if configured via `/config channels loa_log_channel:#channel`."
+    ]
+  },
+  {
     id: "config",
     label: "/config",
     access: "community",

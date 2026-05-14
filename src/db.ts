@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { ActionPreset, CaseMediaLink, GuildConfig, ModerationCase, PendingTicketLog, RobloxGame } from "./types.js";
+import type { ActionPreset, CaseMediaLink, GuildConfig, LoaRequest, ModerationCase, PendingTicketLog, RobloxGame } from "./types.js";
 import { nowIso } from "./utils/time.js";
 
 type DbValue = string | number | bigint | null;
@@ -259,6 +259,47 @@ export class AppDatabase {
       this.run("UPDATE roblox_games SET is_default = 1 WHERE guild_id = ? AND id = ?", guildId, game.id);
     });
     return true;
+  }
+
+  // ── LOA Requests ───────────────────────────────────────────────────────────
+
+  createLoaRequest(values: {
+    guildId: string;
+    userId: string;
+    username: string;
+    reason: string;
+    durationText: string;
+    expiresAt: string | null;
+  }): number {
+    const now = nowIso();
+    const result = this.run(
+      `INSERT INTO loa_requests (guild_id, user_id, username, reason, duration_text, expires_at, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+      values.guildId, values.userId, values.username, values.reason,
+      values.durationText, values.expiresAt, now, now
+    );
+    return result.lastInsertRowid as number;
+  }
+
+  getLoaRequest(id: number): LoaRequest | undefined {
+    const row = this.get<LoaRequestRow>("SELECT * FROM loa_requests WHERE id = ?", id);
+    return row ? mapLoaRequest(row) : undefined;
+  }
+
+  updateLoaRequest(id: number, values: Partial<{
+    status: string;
+    approvalMessageId: string | null;
+    approvalChannelId: string | null;
+    approvedBy: string | null;
+  }>) {
+    const fields: Partial<Record<string, unknown>> = { updated_at: nowIso() };
+    if (values.status !== undefined) fields["status"] = values.status;
+    if ("approvalMessageId" in values) fields["approval_message_id"] = values.approvalMessageId;
+    if ("approvalChannelId" in values) fields["approval_channel_id"] = values.approvalChannelId;
+    if ("approvedBy" in values) fields["approved_by"] = values.approvedBy;
+    const entries = Object.entries(fields);
+    const assignments = entries.map(([k]) => `${k} = ?`).join(", ");
+    this.run(`UPDATE loa_requests SET ${assignments} WHERE id = ?`, ...entries.map(([, v]) => v as DbValue), id);
   }
 
   isLinkedCommunityServer(guildId: string): boolean {
@@ -617,6 +658,22 @@ export class AppDatabase {
         PRIMARY KEY (guild_id, user_id)
       );
 
+      CREATE TABLE IF NOT EXISTS loa_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        username TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        duration_text TEXT NOT NULL,
+        expires_at TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        approval_message_id TEXT,
+        approval_channel_id TEXT,
+        approved_by TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS role_quotas (
         guild_id TEXT NOT NULL,
         role_id TEXT NOT NULL,
@@ -814,6 +871,8 @@ export class AppDatabase {
     this.ensureColumn("moderation_cases", "log_channel_id", "TEXT");
     this.ensureColumn("roblox_games", "is_default", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("guild_configs", "auto_punish_disabled_json", "TEXT");
+    this.ensureColumn("guild_configs", "loa_channel_id", "TEXT");
+    this.ensureColumn("guild_configs", "loa_log_channel_id", "TEXT");
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
@@ -869,6 +928,8 @@ type GuildConfigRow = {
   multiplier_ends_at: string | null;
   last_transcript_message_id: string | null;
   auto_punish_disabled_json: string | null;
+  loa_channel_id: string | null;
+  loa_log_channel_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1040,6 +1101,8 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     multiplierEndsAt: row.multiplier_ends_at,
     lastTranscriptMessageId: row.last_transcript_message_id,
     autoPunishDisabled: parseStringList(row.auto_punish_disabled_json),
+    loaChannelId: row.loa_channel_id,
+    loaLogChannelId: row.loa_log_channel_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -1203,6 +1266,40 @@ function mapRobloxGame(row: RobloxGameRow): RobloxGame {
     apiKey: row.api_key,
     name: row.name,
     isDefault: Boolean(row.is_default),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+type LoaRequestRow = {
+  id: number;
+  guild_id: string;
+  user_id: string;
+  username: string;
+  reason: string;
+  duration_text: string;
+  expires_at: string | null;
+  status: string;
+  approval_message_id: string | null;
+  approval_channel_id: string | null;
+  approved_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapLoaRequest(row: LoaRequestRow): LoaRequest {
+  return {
+    id: row.id,
+    guildId: row.guild_id,
+    userId: row.user_id,
+    username: row.username,
+    reason: row.reason,
+    durationText: row.duration_text,
+    expiresAt: row.expires_at,
+    status: row.status as LoaRequest["status"],
+    approvalMessageId: row.approval_message_id,
+    approvalChannelId: row.approval_channel_id,
+    approvedBy: row.approved_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

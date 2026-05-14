@@ -44,6 +44,8 @@ export type GuildConfig = {
   multiplierEndsAt: string | null;
   lastTranscriptMessageId: string | null;
   autoPunishDisabled: string[];
+  loaChannelId: string | null;
+  loaLogChannelId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -140,6 +142,22 @@ export type RobloxGame = {
   apiKey: string;
   name: string;
   isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LoaRequest = {
+  id: number;
+  guildId: string;
+  userId: string;
+  username: string;
+  reason: string;
+  durationText: string;
+  expiresAt: string | null;
+  status: "pending" | "approved" | "denied";
+  approvalMessageId: string | null;
+  approvalChannelId: string | null;
+  approvedBy: string | null;
   createdAt: string;
   updatedAt: string;
 };

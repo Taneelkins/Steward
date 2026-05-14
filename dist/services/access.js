@@ -30,6 +30,7 @@ export const commandAccess = {
     roblox: "head",
     autopunish: "head",
     edit: "community",
+    loa: "junior",
     action: "head",
     addpoints: "head",
     removepoints: "head",
