@@ -16,6 +16,7 @@ import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
 import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, readProfileStoreEntry, sendDataEdit, setNestedValue, unbanRobloxPlayer, writeProfileStoreEntry } from "../services/roblox.js";
 import { buildLoaApprovalButtons, buildLoaRequestEmbed } from "../services/loa.js";
+import { buildSetupPanel } from "../services/setupPanel.js";
 export async function handleChatInputCommand(interaction, context) {
     if (!interaction.guild || !interaction.member) {
         await interaction.reply({ content: "This bot only works inside a server.", ephemeral: true });
@@ -223,20 +224,9 @@ async function handleSetup(interaction, { db }, member) {
         staffRoleIds: Object.fromEntries(staffRoleSpecs.map((spec) => [spec.key, provisioned.roles[spec.key].id])),
         ownerUserId: owner.id
     });
-    const lines = [
-        `Created or reused category: ${provisioned.category.name}`,
-        `Roles: ${staffRoleSpecs.map((spec) => `<@&${provisioned.roles[spec.key].id}>`).join(", ")}`,
-        `Registration role: <@&${provisioned.canRegisterRole.id}>`,
-        `Log channels: ${[
-            provisioned.channels.logBan,
-            provisioned.channels.logStrike,
-            provisioned.channels.logRestore,
-            provisioned.channels.logDiscord,
-            provisioned.channels.logTicket
-        ].map((channel) => `<#${channel.id}>`).join(", ")}`,
-        ownerWarnings.length > 0 ? `Warnings: ${ownerWarnings.join(" ")}` : null
-    ].filter(Boolean);
-    await interaction.editReply({ content: lines.join("\n"), embeds: [configEmbed(db, guild.id)] });
+    const warningLine = ownerWarnings.length > 0 ? `\n⚠️ ${ownerWarnings.join(" ")}` : "";
+    const summaryLine = `Setup complete. Category **${provisioned.category.name}** provisioned.${warningLine}\n\nUse the buttons below to configure channels, roles, and behavior.`;
+    await interaction.editReply({ content: summaryLine, ...buildSetupPanel(db, guild.id, interaction.user.id) });
 }
 async function handleUpdate(interaction, { db }, member) {
     requireServerOwner(member);
@@ -262,14 +252,9 @@ async function handleUpdate(interaction, { db }, member) {
         categoryId: provisioned.category.id,
         warnings: provisioned.warnings
     });
-    const repaired = [
-        `Checked category: ${provisioned.category.name}`,
-        `Checked roles: ${staffRoleSpecs.map((spec) => `<@&${provisioned.roles[spec.key].id}>`).join(", ")}`,
-        `Checked registration role: <@&${provisioned.canRegisterRole.id}>`,
-        `Checked channels: ${Object.values(provisioned.channels).map((channel) => `<#${channel.id}>`).join(", ")}`,
-        provisioned.warnings.length > 0 ? `Warnings: ${provisioned.warnings.join(" ")}` : "No missing setup items found."
-    ];
-    await interaction.editReply({ content: truncate(repaired.join("\n"), 1900), embeds: [configEmbed(db, guild.id)] });
+    const warningLine = provisioned.warnings.length > 0 ? `\n⚠️ ${provisioned.warnings.join(" ")}` : "";
+    const summaryLine = `Update complete. Category **${provisioned.category.name}** checked.${warningLine || " No missing items."}\n\nUse the buttons below to configure channels, roles, and behavior.`;
+    await interaction.editReply({ content: summaryLine, ...buildSetupPanel(db, guild.id, interaction.user.id) });
 }
 async function handleHelp(interaction, { db }, member) {
     await replyHelpMenu(interaction, db, member);

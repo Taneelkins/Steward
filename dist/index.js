@@ -5,6 +5,7 @@ import { assertRuntimeEnv, readEnv } from "./env.js";
 import { deployCommands, deployCommandsForGuild } from "./deploy-commands.js";
 import { handleChatInputCommand, handleRobloxButton, handleRobloxModal, handleAutoPunishButton } from "./commands/handlers.js";
 import { handleLoaButton } from "./services/loa.js";
+import { handleSetupPanelButton, handleSetupPanelModal } from "./services/setupPanel.js";
 import { runStartupRecovery, startScheduler } from "./scheduler.js";
 import { handlePotentialTranscript } from "./services/tickets.js";
 import { handleLogButton, handleLogMediaMessage, handleLogModal, injectDraftFromDeniedCase, initDraftPersistence } from "./services/logWorkflow.js";
@@ -137,8 +138,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
         if (loaHandled)
             return;
+        const setupPanelHandled = await handleSetupPanelButton(db, interaction).catch(async (error) => {
+            const message = error instanceof Error ? error.message : "Something went wrong.";
+            if (interaction.replied || interaction.deferred) {
+                await interaction.editReply(`Error: ${message}`).catch(() => null);
+            }
+            else {
+                await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+            }
+            return true;
+        });
+        if (setupPanelHandled)
+            return;
     }
     if (interaction.isModalSubmit()) {
+        const setupPanelModalHandled = await handleSetupPanelModal(db, interaction).catch(async (error) => {
+            const message = error instanceof Error ? error.message : "Something went wrong.";
+            await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+            return true;
+        });
+        if (setupPanelModalHandled)
+            return;
         const juniorModalResult = await handleJuniorReviewModal(db, interaction).catch(async (error) => {
             const message = error instanceof Error ? error.message : "Something went wrong.";
             await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
