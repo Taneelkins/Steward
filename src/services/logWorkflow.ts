@@ -184,17 +184,43 @@ function loadDraftsFromDisk() {
         fs.unlinkSync(path.join(draftsDir, file));
         continue;
       }
-      // Reset updatedAt so the in-memory TTL clock starts from now, not from before the crash.
-      // Without this, getDraft() immediately sees "20+ minutes old" and fires the expiry error.
-      // Do NOT call touchDraft here — that would re-save to disk (making the file immortal across
-      // restarts) and schedule a timeout before the user has had a chance to resume.
-      // The first touchDraft call happens in startInteractiveLog when the recovery prompt is shown.
-      const draft: LogDraft = { ...data, updatedAt: Date.now(), statusMessage: null, timeout: null, editReply: null };
+      const draft: LogDraft = { ...data, statusMessage: null, timeout: null, editReply: null };
       sessions.set(draft.id, draft);
       sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
-      console.log(`Recovered log draft ${draft.id} for user ${draft.userId} in guild ${draft.guildId}`);
+      console.log(`[drafts] Loaded draft ${draft.id} for user ${draft.userId} in guild ${draft.guildId}`);
     } catch { /* corrupt file — skip */ }
   }
+}
+
+/**
+ * Scan every draft file looking for one whose id field matches sessionId.
+ * Used as a fallback when a session is not in the in-memory map — e.g. when the
+ * bot restarted and the mod clicks a button from an old message before running /log.
+ */
+function loadDraftBySessionId(sessionId: string): LogDraft | null {
+  if (!draftsDir) return null;
+  let files: string[];
+  try { files = fs.readdirSync(draftsDir).filter((f) => f.endsWith(".json")); } catch { return null; }
+  for (const file of files) {
+    try {
+      const raw = fs.readFileSync(path.join(draftsDir, file), "utf8");
+      const data = JSON.parse(raw) as SerializedDraft;
+      if (data.id !== sessionId) continue;
+      if (Date.now() - data.updatedAt > DRAFT_STALE_MS) {
+        try { fs.unlinkSync(path.join(draftsDir, file)); } catch { /* ignore */ }
+        return null;
+      }
+      const draft: LogDraft = { ...data, statusMessage: null, timeout: null, editReply: null };
+      // Remove any previous draft for this user so sessionsByUser stays consistent
+      const prevId = sessionsByUser.get(sessionUserKey(draft.guildId, draft.userId));
+      if (prevId && prevId !== draft.id) sessions.delete(prevId);
+      sessions.set(draft.id, draft);
+      sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
+      console.log(`[drafts] Lazy-loaded draft ${draft.id} for user ${draft.userId} from disk`);
+      return draft;
+    } catch { continue; }
+  }
+  return null;
 }
 
 const logActions: LogActionButton[] = [
@@ -358,7 +384,7 @@ export async function handleLogButton(db: AppDatabase, interaction: ButtonIntera
 
   // Recovery actions bypass the normal TTL check — draft may be older than 5 min after a restart
   if (action === "recover") {
-    const recoveredDraft = sessions.get(sessionId ?? "");
+    const recoveredDraft = (sessionId ? (sessions.get(sessionId) ?? loadDraftBySessionId(sessionId)) : null);
     if (!recoveredDraft) {
       // The draft for this specific button is gone (TTL fired or already resumed elsewhere).
       // Clean up any other stale recovery draft for this user so `/log` doesn't loop back.
@@ -689,7 +715,9 @@ function createDraft(guildId: string, userId: string, channelId: string | null, 
 }
 
 function getDraft(sessionId: string | undefined, interaction: ButtonInteraction | ModalSubmitInteraction) {
-  const draft = sessionId ? sessions.get(sessionId) : null;
+  // Check in-memory first, then fall back to disk so button clicks work even after a bot restart
+  // without requiring the mod to run /log first.
+  const draft = (sessionId ? (sessions.get(sessionId) ?? loadDraftBySessionId(sessionId)) : null);
   if (!draft) {
     void interaction.reply({ content: "That log draft expired. Run `/log` again.", ephemeral: true }).catch(() => null);
     return null;

@@ -8,6 +8,7 @@
 $botDir  = "C:\Users\Taru\Documents\Bot"
 $node    = "C:\Program Files\nodejs\node.exe"
 $logFile = "$botDir\logs\watcher.log"
+$botLog  = "$botDir\logs\bot.log"
 
 function Log($msg) {
     $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $msg"
@@ -20,11 +21,14 @@ Log "=== Watcher started (PID $PID) ==="
 while ($true) {
     Log "Starting bot..."
 
+    # Redirect bot stdout+stderr to bot.log so we can diagnose crashes
     $proc = Start-Process `
         -FilePath $node `
         -ArgumentList "dist/index.js" `
         -WorkingDirectory $botDir `
         -WindowStyle Hidden `
+        -RedirectStandardOutput "$botLog" `
+        -RedirectStandardError "$botLog.err" `
         -PassThru
 
     if (-not $proc) {
@@ -36,6 +40,15 @@ while ($true) {
     Log "Bot started on PID $($proc.Id)"
     $proc.WaitForExit()
     $code = $proc.ExitCode
+
+    # Merge stderr into bot.log for easy reading
+    if (Test-Path "$botLog.err") {
+        $errContent = Get-Content "$botLog.err" -Raw -ErrorAction SilentlyContinue
+        if ($errContent) {
+            Add-Content -Path $botLog -Value "`n--- STDERR ---`n$errContent" -ErrorAction SilentlyContinue
+        }
+        Remove-Item "$botLog.err" -Force -ErrorAction SilentlyContinue
+    }
 
     Log "Bot exited with code $code"
 
