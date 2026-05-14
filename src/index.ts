@@ -16,6 +16,7 @@ import { handlePotentialTranscript } from "./services/tickets.js";
 import { handleLogButton, handleLogMediaMessage, handleLogModal, injectDraftFromDeniedCase, initDraftPersistence } from "./services/logWorkflow.js";
 import { handleHelpButton } from "./services/helpMenu.js";
 import { handleApprovalButton, handleExecutePunishment, handleJuniorReviewButton, handleJuniorReviewModal } from "./services/cases.js";
+import { postStartupAnnouncement } from "./services/startupAnnouncement.js";
 
 const env = readEnv();
 assertRuntimeEnv(env);
@@ -40,6 +41,7 @@ client.once(Events.ClientReady, async (readyClient) => {
     await deployCommands(db);
   }
   await runStartupRecovery(db, readyClient);
+  await postStartupAnnouncement(db, readyClient, path.dirname(env.databasePath));
   startScheduler(db, readyClient, env.schedulerIntervalSeconds);
   console.log("Startup recovery finished. Scheduler is running.");
 });

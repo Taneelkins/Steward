@@ -5,10 +5,11 @@
 #   75 = /updatebot signal (restart immediately with new build)
 #   *  = crash (restart after brief delay)
 
-$botDir  = "C:\Users\Taru\Documents\Bot"
-$node    = "C:\Program Files\nodejs\node.exe"
-$logFile = "$botDir\logs\watcher.log"
-$botLog  = "$botDir\logs\bot.log"
+$botDir    = "C:\Users\Taru\Documents\Bot"
+$node      = "C:\Program Files\nodejs\node.exe"
+$logFile   = "$botDir\logs\watcher.log"
+$botLog    = "$botDir\logs\bot.log"
+$signalFile = "$botDir\data\restart-signal.json"
 
 function Log($msg) {
     $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $msg"
@@ -38,8 +39,10 @@ while ($true) {
     }
 
     Log "Bot started on PID $($proc.Id)"
+    $botStartTime = Get-Date
     $proc.WaitForExit()
     $code = $proc.ExitCode
+    $exitTime = Get-Date -Format "o"
 
     # Merge stderr into bot.log for easy reading
     if (Test-Path "$botLog.err") {
@@ -57,11 +60,14 @@ while ($true) {
         break
     }
 
+    # Write a signal file so the bot knows why it restarted and how long it was down
     if ($code -eq 75) {
         Log "/updatebot signal. Restarting immediately with new build..."
+        @{ reason = "update"; exitTime = $exitTime } | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding utf8 -Force
     } else {
         Log "Crash or unexpected exit. Restarting in 3s..."
         Start-Sleep -Seconds 3
+        @{ reason = "crash"; exitTime = $exitTime } | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding utf8 -Force
     }
 }
 
