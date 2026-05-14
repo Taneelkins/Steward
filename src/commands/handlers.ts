@@ -1354,20 +1354,20 @@ function buildAutoPunishPanel(db: AppDatabase, guildId: string): { embeds: Embed
 
   const lines = PUNISH_TYPES.map((t) => {
     const on = !disabled.includes(t.key);
-    return `${on ? "✅" : "❌"} **${t.label}** — ${t.description}`;
+    return `${on ? "🟢 **ON**" : "🔴 **OFF**"} — **${t.label}**\n${t.description}`;
   });
 
   const embed = new EmbedBuilder()
     .setTitle("⚡ Auto-Punishment Settings")
     .setColor(0x5865f2)
     .setDescription(lines.join("\n\n"))
-    .setFooter({ text: "Toggle each type with the buttons below." });
+    .setFooter({ text: "Green = active  •  Red = disabled  •  Use buttons to toggle" });
 
   const buttons = PUNISH_TYPES.map((t) => {
     const on = !disabled.includes(t.key);
     return new ButtonBuilder()
       .setCustomId(`autopunish:toggle:${t.key}`)
-      .setLabel(`${on ? "Disable" : "Enable"} ${t.label}`)
+      .setLabel(on ? `Disable ${t.label}` : `Enable ${t.label}`)
       .setStyle(on ? ButtonStyle.Danger : ButtonStyle.Success);
   });
 
@@ -1404,7 +1404,11 @@ export async function handleAutoPunishButton(db: AppDatabase, interaction: Butto
     disabled.splice(idx, 1);
   }
   db.setAutoPunishDisabled(interaction.guild.id, disabled);
-  await interaction.update(buildAutoPunishPanel(db, interaction.guild.id));
+  const panel = buildAutoPunishPanel(db, interaction.guild.id);
+  const updated = await interaction.update(panel).then(() => true).catch(() => false);
+  if (!updated) {
+    await interaction.reply({ ...panel, ephemeral: true }).catch(() => null);
+  }
   return true;
 }
 
