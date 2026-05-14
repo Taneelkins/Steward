@@ -2153,7 +2153,10 @@ async function handleConfigCheck(interaction: ChatInputCommandInteraction, db: A
     bool(config.quotaEnabled, "Quota Enabled"),
     bool(Boolean(config.quotaPeriodStart && config.quotaPeriodEnd), "Quota Period Active"),
     config.linkedGuildId ? `✅ Linked Server: \`${config.linkedGuildId}\`` : `⬜ Linked Server: Not set (optional)`,
-    config.moderationInvite ? `✅ Moderation Invite: set` : `⬜ Moderation Invite: Not set (optional)`
+    config.moderationInvite ? `✅ Moderation Invite: set` : `⬜ Moderation Invite: Not set (optional)`,
+    `${config.autoPunishDisabled.includes("ingame")  ? "❌" : "✅"} Auto-Punish Ingame Bans: ${config.autoPunishDisabled.includes("ingame")  ? "Off" : "On"}`,
+    `${config.autoPunishDisabled.includes("appeal")  ? "❌" : "✅"} Auto-Punish Ingame Unbans: ${config.autoPunishDisabled.includes("appeal")  ? "Off" : "On"}`,
+    `${config.autoPunishDisabled.includes("discord") ? "❌" : "✅"} Auto-Punish Discord Actions: ${config.autoPunishDisabled.includes("discord") ? "Off" : "On"}`
   ];
 
   const allLines = [...channelLines, ...roleLines, ...otherLines];

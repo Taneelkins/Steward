@@ -1102,7 +1102,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     multiplierMilli: row.multiplier_milli,
     multiplierEndsAt: row.multiplier_ends_at,
     lastTranscriptMessageId: row.last_transcript_message_id,
-    autoPunishDisabled: parseStringList(row.auto_punish_disabled_json),
+    autoPunishDisabled: parsePlainStringList(row.auto_punish_disabled_json),
     loaChannelId: row.loa_channel_id,
     loaLogChannelId: row.loa_log_channel_id,
     shoutsChannelId: row.shouts_channel_id,
@@ -1206,6 +1206,18 @@ function parseStringList(value: string | null) {
     const parsed = JSON.parse(value) as unknown;
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((item): item is string => typeof item === "string" && /^\d{15,25}$/.test(item));
+  } catch {
+    return [];
+  }
+}
+
+/** Like parseStringList but without the snowflake-ID regex — for plain string arrays like auto_punish_disabled_json. */
+function parsePlainStringList(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === "string");
   } catch {
     return [];
   }
