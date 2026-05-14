@@ -185,12 +185,13 @@ function loadDraftsFromDisk() {
         continue;
       }
       // Reset updatedAt so the in-memory TTL clock starts from now, not from before the crash.
-      // Without this, getDraft() immediately sees "5+ minutes old" and fires the expiry error.
+      // Without this, getDraft() immediately sees "20+ minutes old" and fires the expiry error.
+      // Do NOT call touchDraft here — that would re-save to disk (making the file immortal across
+      // restarts) and schedule a timeout before the user has had a chance to resume.
+      // The first touchDraft call happens in startInteractiveLog when the recovery prompt is shown.
       const draft: LogDraft = { ...data, updatedAt: Date.now(), statusMessage: null, timeout: null, editReply: null };
       sessions.set(draft.id, draft);
       sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
-      // Schedule the inactivity timeout so recovered drafts don't linger in memory forever.
-      touchDraft(draft);
       console.log(`Recovered log draft ${draft.id} for user ${draft.userId} in guild ${draft.guildId}`);
     } catch { /* corrupt file — skip */ }
   }
