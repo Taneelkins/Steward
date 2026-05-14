@@ -3,9 +3,9 @@
 # Posts a "going down" embed to each shouts channel via the Discord API,
 # then edits it to "back online" once the bot restarts.
 
-$botDir    = "C:\Users\Taru\Documents\Bot"
-$node      = "C:\Program Files\nodejs\node.exe"
-$dataDir   = "$botDir\data"
+$botDir     = "C:\Users\Taru\Documents\Bot"
+$node       = "C:\Program Files\nodejs\node.exe"
+$dataDir    = "$botDir\data"
 $signalFile = "$dataDir\restart-signal.json"
 $shoutsFile = "$dataDir\shouts-channels.json"
 
@@ -41,12 +41,16 @@ Start-Sleep -Seconds 2
 $exitTime = (Get-Date).ToUniversalTime().ToString("o")
 $postedMessages = @()
 
-if ($botToken -and (Test-Path $shoutsFile)) {
+$canPost = $botToken -and (Test-Path $shoutsFile)
+if (-not $botToken)            { Write-Output "WARNING: DISCORD_TOKEN not found in .env - skipping going-down message." }
+if (-not (Test-Path $shoutsFile)) { Write-Output "WARNING: shouts-channels.json not found - skipping going-down message." }
+
+if ($canPost) {
     $shoutsChannels = @()
     try {
         $shoutsChannels = Get-Content $shoutsFile -Raw | ConvertFrom-Json
     } catch {
-        Write-Output "WARNING: Could not read shouts-channels.json — skipping going-down message."
+        Write-Output "WARNING: Could not parse shouts-channels.json - skipping going-down message."
     }
 
     foreach ($entry in $shoutsChannels) {
@@ -56,7 +60,7 @@ if ($botToken -and (Test-Path $shoutsFile)) {
         $embedBody = @{
             embeds = @(
                 @{
-                    title       = "🔄 Steward Restarting"
+                    title       = "Steward Restarting"
                     description = "Going down for an update. Back online shortly."
                     color       = 10181046
                     timestamp   = $exitTime
@@ -74,12 +78,9 @@ if ($botToken -and (Test-Path $shoutsFile)) {
             $postedMessages += @{ channelId = $channelId; messageId = $response.id }
             Write-Output "Posted going-down message to channel $channelId (msg $($response.id))"
         } catch {
-            Write-Output "WARNING: Could not post going-down message to channel $channelId`: $_"
+            Write-Output "WARNING: Could not post going-down message to channel $channelId"
         }
     }
-} else {
-    if (-not $botToken)            { Write-Output "WARNING: DISCORD_TOKEN not found in .env — skipping going-down message." }
-    if (-not (Test-Path $shoutsFile)) { Write-Output "WARNING: shouts-channels.json not found — skipping going-down message." }
 }
 
 # Write signal file (with message IDs if we posted anything)
