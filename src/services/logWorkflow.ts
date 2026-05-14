@@ -451,7 +451,7 @@ export async function handleLogButton(db: AppDatabase, interaction: ButtonIntera
     return true;
   }
 
-  const draft = getDraft(sessionId, interaction);
+  const draft = getDraft(db, sessionId, interaction) ?? await autoCreateDraft(db, interaction);
   if (!draft) return true;
 
   if (action === "action") {
@@ -631,7 +631,7 @@ export async function handleLogModal(db: AppDatabase, interaction: ModalSubmitIn
   }
 
   const [, sessionId, action, value] = interaction.customId.split(":");
-  const draft = getDraft(sessionId, interaction);
+  const draft = getDraft(db, sessionId, interaction) ?? await autoCreateDraft(db, interaction);
   if (!draft) return true;
   if (action !== "save") return false;
 
@@ -735,10 +735,7 @@ function createDraft(guildId: string, userId: string, channelId: string | null, 
   };
 }
 
-function getDraft(sessionId: string | undefined, interaction: ButtonInteraction | ModalSubmitInteraction) {
-  // 1. In-memory lookup
-  // 2. Scan disk by session ID (handles restart where mod clicks before running /log)
-  // 3. Load by guild+user (handles stale session ID where disk has a NEWER draft)
+function getDraft(db: AppDatabase, sessionId: string | undefined, interaction: ButtonInteraction | ModalSubmitInteraction) {
   const guildId = interaction.guild?.id;
   const userId = interaction.user.id;
   const draft =
@@ -746,13 +743,40 @@ function getDraft(sessionId: string | undefined, interaction: ButtonInteraction 
     (guildId ? loadDraftByUser(guildId, userId) : null);
 
   if (!draft) {
-    void interaction.reply({ content: "That log draft expired. Run `/log` again.", ephemeral: true }).catch(() => null);
+    // No existing draft at all — return null without replying so the caller can auto-create one
     return null;
   }
   if (draft.guildId !== guildId || draft.userId !== userId) {
     void interaction.reply({ content: "Only the person who started this log can edit it.", ephemeral: true }).catch(() => null);
     return null;
   }
+  touchDraft(draft);
+  return draft;
+}
+
+/** Called when a button/modal interaction has no draft. Creates a fresh one and shows the log UI. */
+async function autoCreateDraft(db: AppDatabase, interaction: ButtonInteraction | ModalSubmitInteraction): Promise<LogDraft | null> {
+  if (!interaction.guild || !interaction.member) return null;
+  const guild = interaction.guild;
+  const member = interaction.member as GuildMember;
+  const config = db.getGuildConfig(guild.id);
+  if (!config.interactiveLogEnabled) {
+    void interaction.reply({ content: "Interactive logging is disabled for this server.", ephemeral: true }).catch(() => null);
+    return null;
+  }
+  const tier = getStaffTier(db, member);
+  const isHeadMod = tier === "head" || tier === "community" || member.permissions.has(PermissionFlagsBits.Administrator);
+  const draft = createDraft(guild.id, member.id, interaction.channelId, isHeadMod);
+  sessions.set(draft.id, draft);
+  sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
+  saveDraftToDisk(draft);
+  const payload = previewPayload(db, draft);
+  if (interaction.isButton()) {
+    await interaction.update(payload).catch(() => null);
+  } else {
+    await interaction.reply({ ...payload, ephemeral: true }).catch(() => null);
+  }
+  draft.editReply = (p) => interaction.editReply(p);
   touchDraft(draft);
   return draft;
 }
