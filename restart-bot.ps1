@@ -31,7 +31,7 @@ $deployProc = Start-Process `
     -Wait `
     -PassThru
 if ($deployProc.ExitCode -ne 0) {
-    Write-Output "WARNING: deploy-commands exited with code $($deployProc.ExitCode) — commands may not be updated."
+    Write-Output "WARNING: deploy-commands exited with code $($deployProc.ExitCode) - commands may not be updated."
 } else {
     Write-Output "Slash commands deployed successfully."
 }
