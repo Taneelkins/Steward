@@ -168,6 +168,44 @@ export async function kickActivePlayer(
   }
 }
 
+// ── Real-time data edit via MessagingService ─────────────────────────────────
+
+/**
+ * Sends a data-edit request to every running game server so a player who is
+ * currently online gets their stat changed immediately.
+ *
+ * This is best-effort — silently succeeds if no server is running.
+ * The game server must have ModerationService.server.luau installed and
+ * subscribed to the "ModerationDataEdit" topic.
+ *
+ * @param statPath  Dot-notation path matching DataManager:Change() format, e.g. "Stats.Elo"
+ * @param value     New value — will be JSON-encoded and decoded on the game side
+ */
+export async function sendDataEdit(
+  universeId: string,
+  apiKey: string,
+  robloxUserId: number,
+  statPath: string,
+  value: unknown
+): Promise<void> {
+  const url = `https://apis.roblox.com/messaging-service/v1/universes/${universeId}/topics/ModerationDataEdit`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: JSON.stringify({ userId: robloxUserId, statPath, value })
+      }),
+      signal: AbortSignal.timeout(10_000)
+    });
+    if (!res.ok) {
+      console.warn(`[roblox] MessagingService data edit failed for userId ${robloxUserId}: HTTP ${res.status}`);
+    }
+  } catch (err) {
+    console.warn(`[roblox] MessagingService data edit request failed for userId ${robloxUserId}:`, err);
+  }
+}
+
 // ── Duration Parsing ──────────────────────────────────────────────────────────
 
 /**

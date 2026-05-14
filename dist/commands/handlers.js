@@ -14,7 +14,7 @@ import { replyHelpMenu } from "../services/helpMenu.js";
 import { normalizeTicketType, processOverdueTickets } from "../services/tickets.js";
 import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
-import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, unbanRobloxPlayer } from "../services/roblox.js";
+import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, sendDataEdit, unbanRobloxPlayer } from "../services/roblox.js";
 export async function handleChatInputCommand(interaction, context) {
     if (!interaction.guild || !interaction.member) {
         await interaction.reply({ content: "This bot only works inside a server.", ephemeral: true });
@@ -110,6 +110,9 @@ export async function handleChatInputCommand(interaction, context) {
             case "autopunish":
                 await handleAutoPunish(interaction, context, member);
                 break;
+            case "edit":
+                await handleEdit(interaction, context, member);
+                break;
             case "multiplier":
                 await handleMultiplier(interaction, context, member);
                 break;
@@ -154,6 +157,9 @@ export async function handleChatInputCommand(interaction, context) {
                 break;
             case "autopunish":
                 await handleAutoPunish(interaction, context, member);
+                break;
+            case "edit":
+                await handleEdit(interaction, context, member);
                 break;
             default:
                 await interaction.reply({ content: "Unknown command.", ephemeral: true });
@@ -799,6 +805,51 @@ async function handleIngameUnban(interaction, { db }, member) {
         robloxUserId: robloxUser.id, robloxUsername: robloxUser.name, universeId: game.universeId, gameName: game.name
     });
     await interaction.editReply(`✅ **${robloxUser.name}** (ID: ${robloxUser.id}) unbanned from **${game.name}**.`);
+}
+// ── /edit ─────────────────────────────────────────────────────────────────────
+/**
+ * Parse the raw string value from the Discord option into the correct type.
+ * Priority: boolean → number → string.
+ */
+function parseEditValue(raw) {
+    const lower = raw.trim().toLowerCase();
+    if (lower === "true")
+        return true;
+    if (lower === "false")
+        return false;
+    const num = Number(raw.trim());
+    if (!isNaN(num) && raw.trim() !== "")
+        return num;
+    return raw;
+}
+async function handleEdit(interaction, { db }, member) {
+    if (!canUseAccess(db, member, "community"))
+        throw new Error(commandDeniedMessage("community"));
+    await interaction.deferReply({ ephemeral: true });
+    const guild = interaction.guild;
+    const robloxUsername = interaction.options.getString("roblox_user", true).trim();
+    const statPath = interaction.options.getString("stat", true).trim();
+    const rawValue = interaction.options.getString("value", true);
+    const gameOption = interaction.options.getString("game");
+    // Resolve game
+    const game = resolveRobloxGame(db, guild.id, gameOption);
+    // Resolve Roblox user
+    const robloxUser = await lookupRobloxUser(robloxUsername);
+    if (!robloxUser) {
+        await interaction.editReply(`❌ Roblox user \`${robloxUsername}\` not found. Check the spelling and try again.`);
+        return;
+    }
+    const value = parseEditValue(rawValue);
+    await sendDataEdit(game.universeId, game.apiKey, robloxUser.id, statPath, value);
+    await writeAuditAndPost(db, guild, interaction.user.id, "data.edit", {
+        robloxUserId: robloxUser.id,
+        robloxUsername: robloxUser.name,
+        statPath,
+        value: String(value)
+    });
+    await interaction.editReply(`✅ Edit sent for **${robloxUser.name}**\n` +
+        `\`${statPath}\` → \`${String(value)}\`\n` +
+        `-# Takes effect immediately if the player is online in the game. Has no effect if they are offline.`);
 }
 async function handleRoblox(interaction, { db }, member) {
     if (!canUseAccess(db, member, "head"))

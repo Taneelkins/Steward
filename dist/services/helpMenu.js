@@ -308,6 +308,27 @@ const helpCommands = [
         notes: ["Audit records are local and server-specific."]
     },
     {
+        id: "edit",
+        label: "/edit",
+        access: "community",
+        levels: ["admin"],
+        what: "Directly edit a player's in-game datastore stat in real-time via MessagingService.",
+        who: "Community Manager only.",
+        usage: ["`/edit roblox_user:<username> stat:<path> value:<value>`"],
+        examples: [
+            "`/edit roblox_user:PlayerXYZ stat:Stats.Elo value:500`",
+            "`/edit roblox_user:PlayerXYZ stat:Player.Clan value:Warriors`",
+            "`/edit roblox_user:PlayerXYZ stat:Stats.StrikingPower value:100`"
+        ],
+        notes: [
+            "**The player must be online in the game** — the edit is sent via MessagingService which only reaches active servers. It has no effect if the player is offline.",
+            "Use dot-notation for the stat path matching the DataManager template, e.g. `Stats.Elo`, `Player.Clan`, `Stats.Stamina`.",
+            "Values are auto-typed: numbers stay numbers, `true`/`false` become booleans, everything else is a string.",
+            "The action is logged to the audit channel.",
+            "Available stat paths (from the data template): `Stats.Elo`, `Stats.Stamina`, `Stats.Durability`, `Stats.RunningSpeed`, `Stats.Height`, `Stats.Fat`, `Stats.StrikingPower`, `Stats.StrikingSpeed`, `Stats.LowerBodyMuscle`, `Stats.UpperBodyMuscle`, `Player.Clan`, `Player.FirstName`, `Player.Gender`, `Player.Title`, `LastHealth`, `LastStamina`, `LastStomach`."
+        ]
+    },
+    {
         id: "config",
         label: "/config",
         access: "community",

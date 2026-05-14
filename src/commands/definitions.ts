@@ -104,6 +104,8 @@ export function buildCommands(options: CommandBuildOptions = {}) {
 
     autopunishCommand(),
 
+    editCommand(),
+
     new SlashCommandBuilder()
       .setName("lookup")
       .setDescription("Search all case logs by target identity.")
@@ -542,6 +544,25 @@ function autopunishCommand() {
     .setName("autopunish")
     .setDescription("View or toggle automatic punishment execution for different log types.")
     .setDefaultMemberPermissions(headDefault);
+}
+
+function editCommand() {
+  return new SlashCommandBuilder()
+    .setName("edit")
+    .setDescription("Edit a player's in-game datastore stat (Community Managers only).")
+    .addStringOption((option) =>
+      option.setName("roblox_user").setDescription("Roblox username of the player.").setRequired(true)
+    )
+    .addStringOption((option) =>
+      option.setName("stat").setDescription("Stat path to edit, e.g. Stats.Elo or Player.Clan.").setRequired(true)
+    )
+    .addStringOption((option) =>
+      option.setName("value").setDescription("New value — numbers, true/false, or text.").setRequired(true)
+    )
+    .addStringOption((option) =>
+      option.setName("game").setDescription("Game name (only needed if multiple games are configured).")
+    )
+    .setDefaultMemberPermissions(communityDefault);
 }
 
 function textChannelOption(option: SlashCommandChannelOption, name: string, description: string) {

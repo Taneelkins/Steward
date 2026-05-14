@@ -29,6 +29,7 @@ export const commandAccess = {
     ingameunban: "head",
     roblox: "head",
     autopunish: "head",
+    edit: "community",
     action: "head",
     addpoints: "head",
     removepoints: "head",
