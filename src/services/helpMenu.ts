@@ -194,7 +194,7 @@ const helpCommands: HelpCommand[] = [
       "Click **➕ Add Game** to fill in Universe ID, API Key, and a friendly name in a popup form.",
       "Each game shows **🗑️ Remove** and (if multiple games) **Set Default** buttons — click to act instantly, panel refreshes.",
       "Universe ID: open your experience on create.roblox.com — the number in the URL is the ID.",
-      "API Key: create at create.roblox.com/settings/credentials. Select **User API key**. Enable **User Restrictions → Write** and **Messaging Service → Publish**, scoped to your universe.",
+      "API Key: create at create.roblox.com/settings/credentials. Select **User API key**. Enable **User Restrictions → Write**, **Messaging Service → Publish**, **DataStore → Read**, and **DataStore → Write** — all scoped to your universe. DataStore permissions are required for `/edit` to work on offline players.",
       "If only one game is configured it is used automatically. If multiple, use Set Default to pick which one is used for auto-execution from `/log`.",
       "API keys are stored locally in the bot database — treat it as sensitive.",
       "To update a key, add the same Universe ID again — it overwrites."
@@ -340,7 +340,7 @@ const helpCommands: HelpCommand[] = [
     label: "/edit",
     access: "community",
     levels: ["admin"],
-    what: "Directly edit a player's in-game datastore stat in real-time via MessagingService.",
+    what: "Edit a player's in-game datastore stat. Works on both online and offline players — online edits apply instantly via MessagingService, offline edits write directly to the ProfileStore DataStore via the Open Cloud API.",
     who: "Community Manager only.",
     usage: ["`/edit roblox_user:<username> stat:<path> value:<value>`"],
     examples: [
@@ -349,10 +349,12 @@ const helpCommands: HelpCommand[] = [
       "`/edit roblox_user:PlayerXYZ stat:Stats.StrikingPower value:100`"
     ],
     notes: [
-      "**The player must be online in the game** — the edit is sent via MessagingService which only reaches active servers. It has no effect if the player is offline.",
+      "**Online players** — the edit is delivered immediately via MessagingService. The server receives it and applies it live with no data-loss risk.",
+      "**Offline players** — the bot reads the ProfileStore DataStore entry directly via Open Cloud, patches the value, and writes it back. The player's session lock is checked first; if they are mid-session (session lock active) the write is blocked to prevent data corruption.",
       "Use dot-notation for the stat path matching the DataManager template, e.g. `Stats.Elo`, `Player.Clan`, `Stats.Stamina`.",
       "Values are auto-typed: numbers stay numbers, `true`/`false` become booleans, everything else is a string.",
       "The action is logged to the audit channel.",
+      "**Requires DataStore API key permissions** — the API key saved via `/roblox` must have **DataStore → Read** and **DataStore → Write** enabled, in addition to the standard User Restrictions and Messaging Service permissions. See `/help` → Admin → Roblox Game Setup for details.",
       "Available stat paths (from the data template): `Stats.Elo`, `Stats.Stamina`, `Stats.Durability`, `Stats.RunningSpeed`, `Stats.Height`, `Stats.Fat`, `Stats.StrikingPower`, `Stats.StrikingSpeed`, `Stats.LowerBodyMuscle`, `Stats.UpperBodyMuscle`, `Player.Clan`, `Player.FirstName`, `Player.Gender`, `Player.Title`, `LastHealth`, `LastStamina`, `LastStomach`."
     ]
   },
@@ -439,7 +441,9 @@ const helpCommands: HelpCommand[] = [
       "**One-time setup per server.** Each Discord server has its own game — completely separate from other servers.",
       "Run `/config check` after setup to confirm the game is shown under Roblox Game.",
       "Universe ID: open your experience on create.roblox.com — the number in the URL.",
-      "API Key: create.roblox.com/settings/credentials → **User API key** (not group) → enable **User Restrictions → Write** and **Messaging Service → Publish** → scope to your universe.",
+      "API Key: create.roblox.com/settings/credentials → **User API key** (not group) → enable all four permissions below → scope to your universe.",
+      "Required permissions: **User Restrictions → Write** (in-game bans/unbans), **Messaging Service → Publish** (live kick and data edits), **DataStore → Read** and **DataStore → Write** (offline player data editing via `/edit`).",
+      "If you skip DataStore permissions, `/edit` will still work for online players but will fail on offline players with a permission error.",
       "Once saved: `/ingameban` works, Ingame ban logs via `/log` auto-ban, accepted Ingame Ban appeal logs auto-unban.",
       "Junior mod ingame bans wait for senior review approval before executing.",
       "Normal/head mod ingame bans execute the moment the log is submitted.",
