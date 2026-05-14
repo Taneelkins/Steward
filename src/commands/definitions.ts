@@ -199,6 +199,7 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "steward_log", "Steward action log channel (auto-posted on every executed punishment)."))
         .addChannelOption((option) => textChannelOption(option, "loa_channel", "LOA approval channel (requests are posted here for Head Mod+ to review)."))
         .addChannelOption((option) => textChannelOption(option, "loa_log_channel", "LOA log channel (approved LOAs are posted here)."))
+        .addChannelOption((option) => textChannelOption(option, "shouts_channel", "Shouts channel (bot restart announcements are posted here)."))
         .addUserOption((option) => option.setName("owner").setDescription("Owner/admin DM target."))
         .addStringOption((option) => option.setName("ticket_tool_bot_id").setDescription("Ticket Tool bot user ID."))
     )

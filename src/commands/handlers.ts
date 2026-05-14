@@ -525,7 +525,8 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     owner_user_id: interaction.options.getUser("owner")?.id,
     ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined,
     loa_channel_id: getTextChannelOption(interaction, "loa_channel")?.id,
-    loa_log_channel_id: getTextChannelOption(interaction, "loa_log_channel")?.id
+    loa_log_channel_id: getTextChannelOption(interaction, "loa_log_channel")?.id,
+    shouts_channel_id: getTextChannelOption(interaction, "shouts_channel")?.id
   };
   db.updateGuildConfig(guild.id, values);
   await upsertQuotaStatusMessage(db, guild);
@@ -2132,7 +2133,8 @@ async function handleConfigCheck(interaction: ChatInputCommandInteraction, db: A
     ch(config.evidenceArchiveChannelId, "Evidence Archive", true),
     ch(config.approvalChannelId, "CM Approval", true),
     ch(config.juniorHelpChannelId, "Junior Help", true),
-    ch(config.stewardLogChannelId, "Steward Log", true)
+    ch(config.stewardLogChannelId, "Steward Log", true),
+    ch(config.shoutsChannelId, "Shouts Channel", true)
   ];
   const roleLines = [
     ...tierLabels.map(({ key, label }) => {
