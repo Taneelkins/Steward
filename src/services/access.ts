@@ -29,7 +29,7 @@ export const commandAccess: Record<string, CommandAccess> = {
   logedit: "public",
   case: "normal",
   lookup: "normal",
-  warnings: "normal",
+  warnings: "junior",
   ingameban: "normal",
   ingameunban: "head",
   roblox: "head",

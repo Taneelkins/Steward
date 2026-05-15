@@ -10,7 +10,8 @@ import { runStartupRecovery, startScheduler } from "./scheduler.js";
 import { handlePotentialTranscript } from "./services/tickets.js";
 import { handleLogButton, handleLogMediaMessage, handleLogModal, injectDraftFromDeniedCase, initDraftPersistence } from "./services/logWorkflow.js";
 import { handleHelpButton } from "./services/helpMenu.js";
-import { handleApprovalButton, handleExecutePunishment, handleJuniorReviewButton, handleJuniorReviewModal } from "./services/cases.js";
+import { handleApprovalButton, handleExecutePunishment, handleJuniorReviewButton, handleJuniorReviewModal, handleTranscriptButton } from "./services/cases.js";
+import { postStartupAnnouncement, saveShoutsChannels } from "./services/startupAnnouncement.js";
 const env = readEnv();
 assertRuntimeEnv(env);
 initDraftPersistence(path.join(path.dirname(env.databasePath), "drafts"));
@@ -31,6 +32,8 @@ client.once(Events.ClientReady, async (readyClient) => {
         await deployCommands(db);
     }
     await runStartupRecovery(db, readyClient);
+    await postStartupAnnouncement(db, readyClient, path.dirname(env.databasePath));
+    saveShoutsChannels(db, readyClient, path.dirname(env.databasePath));
     startScheduler(db, readyClient, env.schedulerIntervalSeconds);
     console.log("Startup recovery finished. Scheduler is running.");
 });
@@ -53,6 +56,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return true;
         });
         if (helpHandled)
+            return;
+        const transcriptHandled = await handleTranscriptButton(db, interaction).catch(async (error) => {
+            const message = error instanceof Error ? error.message : "Something went wrong.";
+            await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+            return true;
+        });
+        if (transcriptHandled)
             return;
         const logHandled = await handleLogButton(db, interaction).catch(async (error) => {
             const message = error instanceof Error ? error.message : "Something went wrong.";

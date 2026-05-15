@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import path from "node:path";
 import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } from "discord.js";
 import { formatMultiplier, formatPoints, listOrNone, pointsToMilli, truncate } from "../utils/format.js";
 import { canUseAccess, caseLinkComponents, commandDeniedMessage, configSummaryEmbed, getTextChannel, hasCanRegisterRole, postToConfiguredChannel, requireAdmin, requireMod } from "../utils/discord.js";
@@ -17,6 +18,7 @@ import { deployCommandsForGuild } from "../deploy-commands.js";
 import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, readProfileStoreEntry, sendDataEdit, setNestedValue, unbanRobloxPlayer, writeProfileStoreEntry } from "../services/roblox.js";
 import { buildLoaApprovalButtons, buildLoaRequestEmbed } from "../services/loa.js";
 import { buildSetupPanel } from "../services/setupPanel.js";
+import { postGoingDown } from "../services/startupAnnouncement.js";
 export async function handleChatInputCommand(interaction, context) {
     if (!interaction.guild || !interaction.member) {
         await interaction.reply({ content: "This bot only works inside a server.", ephemeral: true });
@@ -143,7 +145,7 @@ export async function handleChatInputCommand(interaction, context) {
                 await handleBackup(interaction, context, member);
                 break;
             case "updatebot":
-                await handleUpdateBot(interaction, member);
+                await handleUpdateBot(interaction, context, member);
                 break;
             case "refresh":
                 await handleRefresh(interaction, context, member);
@@ -331,7 +333,7 @@ async function submitTypedLog(interaction, db, member, actionName, actionDisplay
     });
     const config = db.getGuildConfig(guild.id);
     const executeRow = buildExecutePunishmentButton(record, config);
-    const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+    const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id);
     await interaction.reply({
         content: caseReplyText(`Logged ${record.actionDisplayName ?? record.actionName}`, record.id, record.awardedPointsMilli, config.pointsEnabled),
         embeds: [buildCaseLogEmbed(record, { showPoints: config.pointsEnabled })],
@@ -411,13 +413,15 @@ async function handleConfig(interaction, { db }, member) {
         const cmApproval = interaction.options.getBoolean("cm_approval");
         const linkedServer = interaction.options.getString("linked_server");
         const moderationInvite = interaction.options.getString("moderation_invite");
+        const juniorApprovalPoints = interaction.options.getNumber("junior_approval_points");
         db.updateGuildConfig(guild.id, {
             interactive_log_enabled: interactiveLog === null ? undefined : interactiveLog ? 1 : 0,
             approval_enabled: cmApproval === null ? undefined : cmApproval ? 1 : 0,
             ...(linkedServer !== null ? { linked_guild_id: linkedServer || null } : {}),
-            ...(moderationInvite !== null ? { moderation_invite: moderationInvite || null } : {})
+            ...(moderationInvite !== null ? { moderation_invite: moderationInvite || null } : {}),
+            ...(juniorApprovalPoints !== null ? { junior_approval_points_milli: Math.round(juniorApprovalPoints * 1000) } : {})
         });
-        await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog, linkedServer, moderationInvite });
+        await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog, linkedServer, moderationInvite, juniorApprovalPoints });
         await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
         return;
     }
@@ -442,7 +446,8 @@ async function handleConfig(interaction, { db }, member) {
         owner_user_id: interaction.options.getUser("owner")?.id,
         ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined,
         loa_channel_id: getTextChannelOption(interaction, "loa_channel")?.id,
-        loa_log_channel_id: getTextChannelOption(interaction, "loa_log_channel")?.id
+        loa_log_channel_id: getTextChannelOption(interaction, "loa_log_channel")?.id,
+        shouts_channel_id: getTextChannelOption(interaction, "shouts_channel")?.id
     };
     db.updateGuildConfig(guild.id, values);
     await upsertQuotaStatusMessage(db, guild);
@@ -585,7 +590,7 @@ async function handleCase(interaction, { db }, member) {
         await interaction.reply({
             content: caseReplyText("Logged", record.id, record.awardedPointsMilli, pointsEnabled),
             embeds: [buildCaseLogEmbed(record, { showPoints: pointsEnabled })],
-            components: caseLinkComponents(record.transcriptUrl, record.mediaLinks),
+            components: caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id),
             ephemeral: true
         });
         return;
@@ -635,7 +640,7 @@ async function handleCase(interaction, { db }, member) {
         if (record.juniorReviewStatus === "pending") {
             embed.addFields({ name: "⏳ Awaiting Junior Review", value: "This case has not been reviewed by a Senior Moderator yet.", inline: false });
         }
-        const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+        const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id);
         await interaction.reply({ embeds: [embed], components: linkRows, ephemeral: true });
         return;
     }
@@ -1102,18 +1107,18 @@ function buildAutoPunishPanel(db, guildId) {
     const disabled = config.autoPunishDisabled;
     const lines = PUNISH_TYPES.map((t) => {
         const on = !disabled.includes(t.key);
-        return `${on ? "✅" : "❌"} **${t.label}** — ${t.description}`;
+        return `${on ? "🟢 **ON**" : "🔴 **OFF**"} — **${t.label}**\n${t.description}`;
     });
     const embed = new EmbedBuilder()
         .setTitle("⚡ Auto-Punishment Settings")
         .setColor(0x5865f2)
         .setDescription(lines.join("\n\n"))
-        .setFooter({ text: "Toggle each type with the buttons below." });
+        .setFooter({ text: "Green = active  •  Red = disabled  •  Use buttons to toggle" });
     const buttons = PUNISH_TYPES.map((t) => {
         const on = !disabled.includes(t.key);
         return new ButtonBuilder()
             .setCustomId(`autopunish:toggle:${t.key}`)
-            .setLabel(`${on ? "Disable" : "Enable"} ${t.label}`)
+            .setLabel(on ? `Disable ${t.label}` : `Enable ${t.label}`)
             .setStyle(on ? ButtonStyle.Danger : ButtonStyle.Success);
     });
     const row = new ActionRowBuilder().addComponents(...buttons);
@@ -1150,7 +1155,11 @@ export async function handleAutoPunishButton(db, interaction) {
         disabled.splice(idx, 1);
     }
     db.setAutoPunishDisabled(interaction.guild.id, disabled);
-    await interaction.update(buildAutoPunishPanel(db, interaction.guild.id));
+    const panel = buildAutoPunishPanel(db, interaction.guild.id);
+    const updated = await interaction.update(panel).then(() => true).catch(() => false);
+    if (!updated) {
+        await interaction.reply({ ...panel, ephemeral: true }).catch(() => null);
+    }
     return true;
 }
 async function handleMultiplier(interaction, { db }, member) {
@@ -1696,7 +1705,7 @@ function normalizeActionName(value) {
         .replace(/-+/g, "-")
         .slice(0, 50);
 }
-async function handleUpdateBot(interaction, member) {
+async function handleUpdateBot(interaction, context, member) {
     requireServerOwner(member);
     await interaction.deferReply({ ephemeral: true });
     let pullOutput = "";
@@ -1731,7 +1740,10 @@ async function handleUpdateBot(interaction, member) {
     }
     const summary = [pullOutput.trim(), buildOutput.trim(), deployOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);
     await interaction.editReply(`Update complete. Restarting bot...\n\`\`\`\n${summary}\n\`\`\``);
-    setTimeout(() => process.exit(75), 1500);
+    const dataDir = path.dirname(context.env.databasePath);
+    const notes = interaction.options.getString("notes") ?? undefined;
+    await postGoingDown(context.db, interaction.client, dataDir, notes).catch(() => null);
+    setTimeout(() => process.exit(75), 500);
 }
 async function handleConfigCheck(interaction, db, guildId) {
     const config = db.getGuildConfig(guildId);
@@ -1766,7 +1778,8 @@ async function handleConfigCheck(interaction, db, guildId) {
         ch(config.evidenceArchiveChannelId, "Evidence Archive", true),
         ch(config.approvalChannelId, "CM Approval", true),
         ch(config.juniorHelpChannelId, "Junior Help", true),
-        ch(config.stewardLogChannelId, "Steward Log", true)
+        ch(config.stewardLogChannelId, "Steward Log", true),
+        ch(config.shoutsChannelId, "Shouts Channel", true)
     ];
     const roleLines = [
         ...tierLabels.map(({ key, label }) => {
@@ -1785,7 +1798,10 @@ async function handleConfigCheck(interaction, db, guildId) {
         bool(config.quotaEnabled, "Quota Enabled"),
         bool(Boolean(config.quotaPeriodStart && config.quotaPeriodEnd), "Quota Period Active"),
         config.linkedGuildId ? `✅ Linked Server: \`${config.linkedGuildId}\`` : `⬜ Linked Server: Not set (optional)`,
-        config.moderationInvite ? `✅ Moderation Invite: set` : `⬜ Moderation Invite: Not set (optional)`
+        config.moderationInvite ? `✅ Moderation Invite: set` : `⬜ Moderation Invite: Not set (optional)`,
+        `${config.autoPunishDisabled.includes("ingame") ? "❌" : "✅"} Auto-Punish Ingame Bans: ${config.autoPunishDisabled.includes("ingame") ? "Off" : "On"}`,
+        `${config.autoPunishDisabled.includes("appeal") ? "❌" : "✅"} Auto-Punish Ingame Unbans: ${config.autoPunishDisabled.includes("appeal") ? "Off" : "On"}`,
+        `${config.autoPunishDisabled.includes("discord") ? "❌" : "✅"} Auto-Punish Discord Actions: ${config.autoPunishDisabled.includes("discord") ? "Off" : "On"}`
     ];
     const allLines = [...channelLines, ...roleLines, ...otherLines];
     const missing = allLines.filter((l) => l.startsWith("❌")).length;

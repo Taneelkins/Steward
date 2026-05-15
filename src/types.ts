@@ -47,6 +47,7 @@ export type GuildConfig = {
   loaChannelId: string | null;
   loaLogChannelId: string | null;
   shoutsChannelId: string | null;
+  juniorApprovalPointsMilli: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -115,7 +116,12 @@ export type CaseMediaLink = {
   label: string;
   url: string;
   kind: "image" | "video" | "file";
+  /** Original Discord CDN URL. Cleared (null) after the file is uploaded to the archive channel. */
   sourceUrl?: string | null;
+  /** Stable idempotency key for the original attachment upload. */
+  archiveKey?: string | null;
+  /** True once the file has been successfully re-uploaded to the evidence archive channel. */
+  archived?: boolean;
 };
 
 export type PendingTicketLog = {

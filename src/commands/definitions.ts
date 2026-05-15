@@ -67,7 +67,7 @@ export function buildCommands(options: CommandBuildOptions = {}) {
     modshopCommand(),
     actionCommand(pointsEnabled),
     caseCommand(pointsEnabled),
-    ...(pointsEnabled ? [pointsCommand(), multiplierCommand()] : []),
+    ...(pointsEnabled ? [pointsCommand(), multiplierCommand(), checkpointsCommand(), multiCommand(), addpointsCommand(), removepointsCommand()] : []),
 
     new SlashCommandBuilder()
       .setName("strikes")
@@ -78,7 +78,7 @@ export function buildCommands(options: CommandBuildOptions = {}) {
       .setName("warnings")
       .setDescription("View the warning history for a Discord user.")
       .addUserOption((option) => option.setName("target").setDescription("Discord user to look up.").setRequired(true))
-      .setDefaultMemberPermissions(normalDefault),
+      .setDefaultMemberPermissions(juniorDefault),
 
     quotaCommand(pointsEnabled),
     ticketlogCommand(),
@@ -212,6 +212,13 @@ function configCommand() {
         .addBooleanOption((option) => option.setName("cm_approval").setDescription("Enable CM approval requirement for non-CM logs (default: on)."))
         .addStringOption((option) => option.setName("linked_server").setDescription("Guild ID of the linked community server for cross-server punishment enforcement."))
         .addStringOption((option) => option.setName("moderation_invite").setDescription("Permanent invite link to include in punishment DMs (e.g. https://discord.gg/...)."))
+        .addNumberOption((option) =>
+          option
+            .setName("junior_approval_points")
+            .setDescription("Quota points awarded to a mod for approving a junior log (default: 0.5). Set to 0 to disable.")
+            .setMinValue(0)
+            .setMaxValue(100)
+        )
     )
     .addSubcommand((sub) =>
       sub
@@ -382,6 +389,40 @@ function multiplierCommand() {
     )
     .addSubcommand((sub) => sub.setName("clear").setDescription("Reset multiplier to 1x.").addStringOption((option) => option.setName("reason").setDescription("Why it was cleared.").setRequired(true)))
     .addSubcommand((sub) => sub.setName("view").setDescription("View active multiplier."))
+    .setDefaultMemberPermissions(headDefault);
+}
+
+function checkpointsCommand() {
+  return new SlashCommandBuilder()
+    .setName("checkpoints")
+    .setDescription("View your points total and the active staff leaderboard.")
+    .setDefaultMemberPermissions(juniorDefault);
+}
+
+function multiCommand() {
+  return new SlashCommandBuilder()
+    .setName("multi")
+    .setDescription("View the current point multiplier.")
+    .setDefaultMemberPermissions(juniorDefault);
+}
+
+function addpointsCommand() {
+  return new SlashCommandBuilder()
+    .setName("addpoints")
+    .setDescription("Manually add points to a moderator.")
+    .addUserOption((option) => option.setName("moderator").setDescription("Moderator to add points to.").setRequired(true))
+    .addNumberOption((option) => option.setName("amount").setDescription("Points to add.").setRequired(true))
+    .addStringOption((option) => option.setName("reason").setDescription("Reason for the adjustment.").setRequired(true))
+    .setDefaultMemberPermissions(headDefault);
+}
+
+function removepointsCommand() {
+  return new SlashCommandBuilder()
+    .setName("removepoints")
+    .setDescription("Manually remove points from a moderator.")
+    .addUserOption((option) => option.setName("moderator").setDescription("Moderator to remove points from.").setRequired(true))
+    .addNumberOption((option) => option.setName("amount").setDescription("Points to remove.").setRequired(true))
+    .addStringOption((option) => option.setName("reason").setDescription("Reason for the adjustment.").setRequired(true))
     .setDefaultMemberPermissions(headDefault);
 }
 

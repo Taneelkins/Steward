@@ -15,7 +15,7 @@ import {
 import type { AppDatabase } from "../db.js";
 import type { GuildConfig } from "../types.js";
 import { type CommandAccess, type StaffTier, tierAllows } from "../services/access.js";
-import { truncate } from "./format.js";
+import { formatPoints, truncate } from "./format.js";
 import { colors } from "./theme.js";
 
 // Bot developer — always has full authority in every server
@@ -63,7 +63,7 @@ export function transcriptFieldValue(value: string | null | undefined) {
   if (!value) return "None";
   return normalizeHttpUrl(value)
     ? "Open with the Transcript button below."
-    : "Saved, but the link is not a valid HTTP or HTTPS URL for a Discord button.";
+    : "Saved — press the View Transcript button below to see it.";
 }
 
 export function transcriptLinkButton(value: string | null | undefined) {
@@ -95,11 +95,39 @@ export function transcriptLinkComponents(value: string | null | undefined) {
   return labeledLinkComponents([{ label: "Transcript", url: value }]);
 }
 
-export function caseLinkComponents(transcriptUrl: string | null | undefined, mediaLinks: Array<{ label: string; url: string }> = []) {
-  return labeledLinkComponents([
-    { label: "Transcript", url: transcriptUrl },
-    ...mediaLinks.map((link) => ({ label: link.label, url: link.url }))
-  ]);
+export function caseLinkComponents(
+  transcriptUrl: string | null | undefined,
+  mediaLinks: Array<{ label: string; url: string }> = [],
+  caseId?: number
+) {
+  const buttons: ButtonBuilder[] = [];
+
+  const transcriptHref = normalizeHttpUrl(transcriptUrl);
+  if (transcriptHref) {
+    // Valid URL — show as a clickable link button
+    buttons.push(new ButtonBuilder().setLabel("Transcript").setStyle(ButtonStyle.Link).setURL(transcriptHref));
+  } else if (transcriptUrl && caseId !== undefined) {
+    // Saved but not a valid URL — show a button that reveals the raw value ephemerally
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`transcript_raw:${caseId}`)
+        .setLabel("View Transcript")
+        .setStyle(ButtonStyle.Secondary)
+    );
+  }
+
+  for (const link of mediaLinks) {
+    const url = normalizeHttpUrl(link.url);
+    if (url) {
+      buttons.push(new ButtonBuilder().setLabel(link.label.slice(0, 80)).setStyle(ButtonStyle.Link).setURL(url));
+    }
+  }
+
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  for (let i = 0; i < buttons.length && rows.length < 5; i += 5) {
+    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons.slice(i, i + 5)));
+  }
+  return rows;
 }
 
 export async function isAdminMember(db: AppDatabase, member: GuildMember) {
@@ -121,11 +149,21 @@ export function hasCanRegisterRole(db: AppDatabase, member: GuildMember) {
 
 export function getStaffTier(db: AppDatabase, member: GuildMember): StaffTier | null {
   const roles = db.listStaffRoles(member.guild.id);
+  const memberHasId = (roleId: string) => member.roles.cache.has(roleId);
+  // Name fallback: checks if the member has any Discord role whose name matches a
+  // configured role for that key. Handles role ID mismatches (e.g. role was recreated).
+  const memberHasName = (key: string) =>
+    roles.some((role) => staffRoleKeyMatches(role.key, role.name, key) && member.roles.cache.some((r) => r.name.toLowerCase() === role.name.toLowerCase()));
+
+  // Base staff check — ID first, name fallback
   const staff = roles.find((role) => role.key === "staff" || role.name.toLowerCase() === "staff");
-  const hasBaseStaff = staff ? member.roles.cache.has(staff.roleId) : member.roles.cache.some((role) => role.name.toLowerCase() === "staff");
+  const hasBaseStaff = staff
+    ? memberHasId(staff.roleId) || member.roles.cache.some((r) => r.name.toLowerCase() === "staff")
+    : member.roles.cache.some((r) => r.name.toLowerCase() === "staff");
   if (!hasBaseStaff) return null;
 
-  const hasKey = (key: string) => roles.some((role) => staffRoleKeyMatches(role.key, role.name, key) && member.roles.cache.has(role.roleId));
+  // Tier checks — ID first, then name fallback against configured role names
+  const hasKey = (key: string) => roles.some((role) => staffRoleKeyMatches(role.key, role.name, key) && memberHasId(role.roleId)) || memberHasName(key);
   if (hasKey("communityManager")) return "community";
   if (hasKey("headMod")) return "head";
   if (hasKey("mod") || hasKey("seniorMod")) return "normal";
@@ -208,6 +246,7 @@ export function configSummaryEmbed(
       { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "CM Approval Toggle", value: config.approvalEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "Point System", value: config.pointsEnabled ? "Enabled" : "Disabled", inline: true },
+      { name: "Jr. Approval Points", value: config.juniorApprovalPointsMilli === 0 ? "Disabled" : formatPoints(config.juniorApprovalPointsMilli), inline: true },
       { name: "Quota Enabled", value: config.quotaEnabled ? "Yes" : "No", inline: true },
       {
         name: "Auto-Punish",

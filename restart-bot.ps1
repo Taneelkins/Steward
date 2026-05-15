@@ -14,6 +14,7 @@ $botDir     = "C:\Users\Taru\Documents\Bot"
 $node       = "C:\Program Files\nodejs\node.exe"
 $dataDir    = "$botDir\data"
 $signalFile = "$dataDir\restart-signal.json"
+$pm2BotPidFile = "$env:USERPROFILE\.pm2\pids\steward-bot-0.pid"
 
 # ── Kill existing bot process ─────────────────────────────────────────────────
 $botProcs = Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -like "*dist/index*" -and $_.Name -eq "node.exe" }
@@ -27,6 +28,15 @@ $watcherProcs = Get-WmiObject Win32_Process | Where-Object { $_.CommandLine -lik
 foreach ($p in $watcherProcs) {
     Write-Output "Stopping watcher PID $($p.ProcessId)..."
     Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+}
+
+if (Test-Path $pm2BotPidFile) {
+    $pm2BotPid = (Get-Content $pm2BotPidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if ($pm2BotPid -and (Get-Process -Id $pm2BotPid -ErrorAction SilentlyContinue)) {
+        Write-Output "PM2 steward-bot is already running on PID $pm2BotPid. Not launching a duplicate watcher bot."
+        Write-Output "Stop PM2 steward-bot first if you want restart-bot.ps1 to take over."
+        exit 0
+    }
 }
 
 Start-Sleep -Seconds 2

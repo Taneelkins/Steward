@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { nowIso } from "./utils/time.js";
+export const PENDING_EVIDENCE_ARCHIVE_URL = "__PENDING_EVIDENCE_ARCHIVE__";
 export class AppDatabase {
     sqlite;
     filePath;
@@ -293,8 +294,36 @@ export class AppDatabase {
     insertEvidenceArchive(values) {
         this.run(`INSERT INTO evidence_archives (
         guild_id, case_id, source_message_url, archived_message_url, moderator_user_id,
+        source_attachment_key,
         target_user_id, reason, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, values.guildId, values.caseId, values.sourceMessageUrl, values.archivedMessageUrl, values.moderatorUserId, values.targetUserId ?? null, values.reason ?? null, nowIso());
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, values.guildId, values.caseId, values.sourceMessageUrl, values.archivedMessageUrl, values.moderatorUserId, values.sourceAttachmentKey ?? null, values.targetUserId ?? null, values.reason ?? null, nowIso());
+    }
+    getEvidenceArchiveBySourceKey(guildId, sourceAttachmentKey) {
+        return this.get(`SELECT
+        source_attachment_key AS sourceAttachmentKey,
+        source_message_url AS sourceMessageUrl,
+        archived_message_url AS archivedMessageUrl,
+        created_at AS createdAt
+       FROM evidence_archives
+       WHERE guild_id = ? AND source_attachment_key = ?
+       ORDER BY id DESC
+       LIMIT 1`, guildId, sourceAttachmentKey);
+    }
+    claimEvidenceArchive(values) {
+        const result = this.run(`INSERT OR IGNORE INTO evidence_archives (
+        guild_id, case_id, source_message_url, archived_message_url, moderator_user_id,
+        source_attachment_key, target_user_id, reason, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, values.guildId, values.caseId ?? null, values.sourceMessageUrl, PENDING_EVIDENCE_ARCHIVE_URL, values.moderatorUserId, values.sourceAttachmentKey, values.targetUserId ?? null, values.reason ?? null, nowIso());
+        return (result.changes ?? 0) > 0;
+    }
+    completeEvidenceArchive(guildId, sourceAttachmentKey, archivedMessageUrl) {
+        this.run(`UPDATE evidence_archives
+       SET archived_message_url = ?
+       WHERE guild_id = ? AND source_attachment_key = ?`, archivedMessageUrl, guildId, sourceAttachmentKey);
+    }
+    deletePendingEvidenceArchive(guildId, sourceAttachmentKey) {
+        this.run(`DELETE FROM evidence_archives
+       WHERE guild_id = ? AND source_attachment_key = ? AND archived_message_url = ?`, guildId, sourceAttachmentKey, PENDING_EVIDENCE_ARCHIVE_URL);
     }
     migrate() {
         this.exec(`
@@ -561,6 +590,7 @@ export class AppDatabase {
         source_message_url TEXT NOT NULL,
         archived_message_url TEXT NOT NULL,
         moderator_user_id TEXT NOT NULL,
+        source_attachment_key TEXT,
         target_user_id TEXT,
         reason TEXT,
         created_at TEXT NOT NULL
@@ -663,6 +693,10 @@ export class AppDatabase {
         this.ensureColumn("guild_configs", "auto_punish_disabled_json", "TEXT");
         this.ensureColumn("guild_configs", "loa_channel_id", "TEXT");
         this.ensureColumn("guild_configs", "loa_log_channel_id", "TEXT");
+        this.ensureColumn("guild_configs", "shouts_channel_id", "TEXT");
+        this.ensureColumn("guild_configs", "junior_approval_points_milli", "INTEGER NOT NULL DEFAULT 500");
+        this.ensureColumn("evidence_archives", "source_attachment_key", "TEXT");
+        this.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_archives_source_attachment_key ON evidence_archives(guild_id, source_attachment_key);");
     }
     ensureColumn(table, column, definition) {
         const columns = this.all(`PRAGMA table_info(${table})`);
@@ -717,9 +751,11 @@ function mapGuildConfig(row) {
         multiplierMilli: row.multiplier_milli,
         multiplierEndsAt: row.multiplier_ends_at,
         lastTranscriptMessageId: row.last_transcript_message_id,
-        autoPunishDisabled: parseStringList(row.auto_punish_disabled_json),
+        autoPunishDisabled: parsePlainStringList(row.auto_punish_disabled_json),
         loaChannelId: row.loa_channel_id,
         loaLogChannelId: row.loa_log_channel_id,
+        shoutsChannelId: row.shouts_channel_id,
+        juniorApprovalPointsMilli: row.junior_approval_points_milli ?? 500,
         createdAt: row.created_at,
         updatedAt: row.updated_at
     };
@@ -809,11 +845,14 @@ function parseMediaLinks(value) {
             const kind = link.kind === "image" || link.kind === "video" ? link.kind : "file";
             return { label: link.label, url: link.url, kind, sourceUrl };
         })
-            .filter((item) => Boolean(item));
+            .filter((item) => item !== null && !isGeneratedProofLink(item));
     }
     catch {
         return [];
     }
+}
+function isGeneratedProofLink(link) {
+    return link.label === "Proof" || /^Proof \d+$/.test(link.label);
 }
 function parseStringList(value) {
     if (!value)
@@ -823,6 +862,20 @@ function parseStringList(value) {
         if (!Array.isArray(parsed))
             return [];
         return parsed.filter((item) => typeof item === "string" && /^\d{15,25}$/.test(item));
+    }
+    catch {
+        return [];
+    }
+}
+/** Like parseStringList but without the snowflake-ID regex — for plain string arrays like auto_punish_disabled_json. */
+function parsePlainStringList(value) {
+    if (!value)
+        return [];
+    try {
+        const parsed = JSON.parse(value);
+        if (!Array.isArray(parsed))
+            return [];
+        return parsed.filter((item) => typeof item === "string");
     }
     catch {
         return [];

@@ -12,7 +12,7 @@ type RestartMessage = { channelId: string; messageId: string };
 
 type RestartSignal = {
   reason: "crash" | "update";
-  exitTime: string;
+  exitTime?: string;            // omitted when signal is pre-written by an external tool
   updateNotes?: string;         // brief changelog shown in the shouts channel
   messages?: RestartMessage[]; // present for update restarts — used to edit the "going down" message
 };
@@ -28,6 +28,24 @@ function formatOffline(ms: number): string {
   const hours = Math.floor(mins / 60);
   const remMins = mins % 60;
   return remMins > 0 ? `${hours}h ${remMins}m` : `${hours}h`;
+}
+
+/**
+ * Formats a raw changelog notes string into a readable list.
+ * Splits on commas and newlines, capitalises each item, and renders as bullet points.
+ * Example: "fixed warning command, fixed archive logs"
+ *   → "• Fixed warning command\n• Fixed archive logs"
+ */
+function formatChangelog(notes: string): string {
+  const items = notes
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => s.charAt(0).toUpperCase() + s.slice(1));
+
+  if (items.length === 0) return notes.trim();
+  if (items.length === 1) return items[0];
+  return items.map((item) => `• ${item}`).join("\n");
 }
 
 // ── Save shouts channels to disk ─────────────────────────────────────────────
@@ -59,7 +77,7 @@ export async function postGoingDown(db: AppDatabase, client: Client, dataDir: st
   const downEmbed = new EmbedBuilder()
     .setColor(colors.voidPurple)
     .setTitle("🔄 Steward Restarting")
-    .setDescription(`Going down for an update. Back online shortly.${updateNotes ? `\n\n**Changes:** ${updateNotes}` : ""}`)
+    .setDescription(`Going down for an update. Back online shortly.${updateNotes ? `\n\n**Changes:**\n${formatChangelog(updateNotes)}` : ""}`)
     .setTimestamp();
 
   for (const guild of client.guilds.cache.values()) {
@@ -98,17 +116,17 @@ export async function postStartupAnnouncement(db: AppDatabase, client: Client, d
   }
 
   const now = Date.now();
-  const exitMs = new Date(signal.exitTime).getTime();
-  const offlineMs = now - exitMs;
-  const offlineStr = formatOffline(offlineMs);
-  const exitTimestamp = `<t:${Math.floor(exitMs / 1000)}:T>`;
+  const exitMs = signal.exitTime ? new Date(signal.exitTime).getTime() : null;
+  const offlineMs = exitMs ? now - exitMs : null;
+  const offlineStr = offlineMs !== null ? formatOffline(offlineMs) : null;
+  const exitTimestamp = exitMs ? `<t:${Math.floor(exitMs / 1000)}:T>` : null;
 
   if (signal.reason === "update" && signal.messages?.length) {
     // Edit the "going down" message that restart-bot.ps1 already posted
     const backEmbed = new EmbedBuilder()
       .setColor(colors.voidPurple)
       .setTitle("✅ Steward Back Online")
-      .setDescription(`Restarted for an update. Down for **${offlineStr}**.${signal.updateNotes ? `\n\n**Changes:** ${signal.updateNotes}` : ""}`)
+      .setDescription(`Restarted for an update.${offlineStr ? ` Down for **${offlineStr}**.` : ""}${signal.updateNotes ? `\n\n**Changes:**\n${formatChangelog(signal.updateNotes)}` : ""}`)
       .setTimestamp();
 
     for (const { channelId, messageId } of signal.messages) {
@@ -140,13 +158,13 @@ export async function postStartupAnnouncement(db: AppDatabase, client: Client, d
       ? new EmbedBuilder()
           .setColor(colors.voidPurple)
           .setTitle("✅ Steward Back Online")
-          .setDescription(`Restarted for an update. Down for **${offlineStr}**.${signal.updateNotes ? `\n\n**Changes:** ${signal.updateNotes}` : ""}`)
+          .setDescription(`Restarted for an update.${offlineStr ? ` Down for **${offlineStr}**.` : ""}${signal.updateNotes ? `\n\n**Changes:**\n${formatChangelog(signal.updateNotes)}` : ""}`)
           .setTimestamp()
       : new EmbedBuilder()
           .setColor(0xe74c3c)
           .setTitle("⚠️ Steward Restarted After Crash")
           .setDescription(
-            `Crash detected at ${exitTimestamp}.\nWas offline for **${offlineStr}**.\nSteward is back online.`
+            `${exitTimestamp ? `Crash detected at ${exitTimestamp}.\n` : ""}${offlineStr ? `Was offline for **${offlineStr}**.\n` : ""}Steward is back online.`
           )
           .setTimestamp();
 

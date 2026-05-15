@@ -6,6 +6,8 @@ import { nowIso } from "./utils/time.js";
 
 type DbValue = string | number | bigint | null;
 
+export const PENDING_EVIDENCE_ARCHIVE_URL = "__PENDING_EVIDENCE_ARCHIVE__";
+
 export type StaffRoleConfig = {
   key: string;
   roleId: string;
@@ -488,20 +490,92 @@ export class AppDatabase {
     moderatorUserId: string;
     targetUserId?: string | null;
     reason?: string | null;
+    sourceAttachmentKey?: string | null;
   }) {
     this.run(
       `INSERT INTO evidence_archives (
         guild_id, case_id, source_message_url, archived_message_url, moderator_user_id,
+        source_attachment_key,
         target_user_id, reason, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       values.guildId,
       values.caseId,
       values.sourceMessageUrl,
       values.archivedMessageUrl,
       values.moderatorUserId,
+      values.sourceAttachmentKey ?? null,
       values.targetUserId ?? null,
       values.reason ?? null,
       nowIso()
+    );
+  }
+
+  getEvidenceArchiveBySourceKey(guildId: string, sourceAttachmentKey: string) {
+    return this.get<{
+      sourceAttachmentKey: string;
+      sourceMessageUrl: string;
+      archivedMessageUrl: string;
+      createdAt: string;
+    }>(
+      `SELECT
+        source_attachment_key AS sourceAttachmentKey,
+        source_message_url AS sourceMessageUrl,
+        archived_message_url AS archivedMessageUrl,
+        created_at AS createdAt
+       FROM evidence_archives
+       WHERE guild_id = ? AND source_attachment_key = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      guildId,
+      sourceAttachmentKey
+    );
+  }
+
+  claimEvidenceArchive(values: {
+    guildId: string;
+    sourceAttachmentKey: string;
+    sourceMessageUrl: string;
+    moderatorUserId: string;
+    caseId?: number | null;
+    targetUserId?: string | null;
+    reason?: string | null;
+  }) {
+    const result = this.run(
+      `INSERT OR IGNORE INTO evidence_archives (
+        guild_id, case_id, source_message_url, archived_message_url, moderator_user_id,
+        source_attachment_key, target_user_id, reason, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      values.guildId,
+      values.caseId ?? null,
+      values.sourceMessageUrl,
+      PENDING_EVIDENCE_ARCHIVE_URL,
+      values.moderatorUserId,
+      values.sourceAttachmentKey,
+      values.targetUserId ?? null,
+      values.reason ?? null,
+      nowIso()
+    );
+    return (result.changes ?? 0) > 0;
+  }
+
+  completeEvidenceArchive(guildId: string, sourceAttachmentKey: string, archivedMessageUrl: string) {
+    this.run(
+      `UPDATE evidence_archives
+       SET archived_message_url = ?
+       WHERE guild_id = ? AND source_attachment_key = ?`,
+      archivedMessageUrl,
+      guildId,
+      sourceAttachmentKey
+    );
+  }
+
+  deletePendingEvidenceArchive(guildId: string, sourceAttachmentKey: string) {
+    this.run(
+      `DELETE FROM evidence_archives
+       WHERE guild_id = ? AND source_attachment_key = ? AND archived_message_url = ?`,
+      guildId,
+      sourceAttachmentKey,
+      PENDING_EVIDENCE_ARCHIVE_URL
     );
   }
 
@@ -770,6 +844,7 @@ export class AppDatabase {
         source_message_url TEXT NOT NULL,
         archived_message_url TEXT NOT NULL,
         moderator_user_id TEXT NOT NULL,
+        source_attachment_key TEXT,
         target_user_id TEXT,
         reason TEXT,
         created_at TEXT NOT NULL
@@ -874,6 +949,9 @@ export class AppDatabase {
     this.ensureColumn("guild_configs", "loa_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "loa_log_channel_id", "TEXT");
     this.ensureColumn("guild_configs", "shouts_channel_id", "TEXT");
+    this.ensureColumn("guild_configs", "junior_approval_points_milli", "INTEGER NOT NULL DEFAULT 500");
+    this.ensureColumn("evidence_archives", "source_attachment_key", "TEXT");
+    this.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_archives_source_attachment_key ON evidence_archives(guild_id, source_attachment_key);");
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
@@ -932,6 +1010,7 @@ type GuildConfigRow = {
   loa_channel_id: string | null;
   loa_log_channel_id: string | null;
   shouts_channel_id: string | null;
+  junior_approval_points_milli: number;
   created_at: string;
   updated_at: string;
 };
@@ -1106,6 +1185,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     loaChannelId: row.loa_channel_id,
     loaLogChannelId: row.loa_log_channel_id,
     shoutsChannelId: row.shouts_channel_id,
+    juniorApprovalPointsMilli: row.junior_approval_points_milli ?? 500,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -1194,10 +1274,14 @@ function parseMediaLinks(value: string | null) {
         const kind: CaseMediaLink["kind"] = link.kind === "image" || link.kind === "video" ? link.kind : "file";
         return { label: link.label, url: link.url, kind, sourceUrl };
       })
-      .filter((item): item is CaseMediaLink => Boolean(item));
+      .filter((item): item is CaseMediaLink => item !== null && !isGeneratedProofLink(item));
   } catch {
     return [];
   }
+}
+
+function isGeneratedProofLink(link: CaseMediaLink) {
+  return link.label === "Proof" || /^Proof \d+$/.test(link.label);
 }
 
 function parseStringList(value: string | null) {

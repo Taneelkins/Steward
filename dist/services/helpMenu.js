@@ -224,10 +224,10 @@ const helpCommands = [
     {
         id: "warnings",
         label: "/warnings",
-        access: "normal",
-        levels: ["moderator", "senior", "admin"],
+        access: "junior",
+        levels: ["junior", "moderator", "senior", "admin"],
         what: "Shows the full warning history for a Discord user — warning number, reason, issuing moderator, and timestamp.",
-        who: "Moderator and above.",
+        who: "Junior Moderator and above.",
         usage: ["`/warnings target:@user`"],
         examples: ["`/warnings target:@User`"],
         notes: [
@@ -363,7 +363,7 @@ const helpCommands = [
         usage: ["`/config roles ...`", "`/config channels ...`", "`/config behavior interactive_log:true`"],
         subcommands: [
             "roles: staff_role, can_register_role, community_manager_role, head_mod_role, senior_mod_role, normal_mod_role, junior_mod_role, junior_escalation_role, junior_other_escalation_role",
-            "channels: actions (fallback), alerts, audit, quota, quota_alerts, staff_registration, ticket_transcripts, approval_channel, junior_help, steward_log, logingame, logstrike, logrestore, logdiscord, logticket, logappeal, evidence_archive",
+            "channels: actions (fallback), alerts, audit, quota, quota_alerts, staff_registration, ticket_transcripts, approval_channel, junior_help, steward_log, logingame, logstrike, logrestore, logdiscord, logticket, logappeal, evidence_archive, shouts_channel",
             "behavior: interactive_log, cm_approval, points_enabled, quota_enabled"
         ],
         examples: ["`/config channels logingame:#log-ingame logdiscord:#log-discord alerts:#mod-alerts junior_help:#junior-review`", "`/config roles staff_role:@Staff community_manager_role:@CM junior_mod_role:@Junior`", "`/config behavior interactive_log:true cm_approval:true`"],

@@ -239,7 +239,7 @@ export async function createCase(db, input) {
                 inline: false
             });
         }
-        const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+        const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id);
         const appealChannel = actionName === "appeal" ? config.appealLogChannelId : null;
         const logChannelId = appealChannel ?? db.getActionLogChannelId(guildId, actionName) ?? config.actionLogChannelId;
         const logMsg = await postToConfiguredChannel(input.guild, logChannelId, {
@@ -296,7 +296,7 @@ async function stampCaseLog(db, guild, record, extraOptions) {
     if (!msg)
         return;
     const embed = buildCaseLogEmbed(refreshed, { showPoints: config.pointsEnabled, ...extraOptions });
-    const linkRows = caseLinkComponents(refreshed.transcriptUrl, refreshed.mediaLinks);
+    const linkRows = caseLinkComponents(refreshed.transcriptUrl, refreshed.mediaLinks, refreshed.id);
     await msg.edit({ embeds: [embed], components: linkRows }).catch(() => null);
 }
 /**
@@ -403,11 +403,14 @@ function normalizeMediaLinks(links) {
         const label = link.label.trim().slice(0, 80);
         const url = link.url.trim();
         const kind = link.kind === "image" || link.kind === "video" ? link.kind : "file";
-        if (!label || !url)
+        if (!label || !url || isGeneratedProofLink(label))
             continue;
         deduped.set(`${label}:${url}`, { label, url, kind });
     }
     return [...deduped.values()].slice(0, 20);
+}
+function isGeneratedProofLink(label) {
+    return label === "Proof" || /^Proof \d+$/.test(label);
 }
 function cleanOptional(value) {
     const trimmed = value?.trim();
@@ -618,7 +621,7 @@ async function updateCaseLogAfterApproval(db, guild, record, status, reviewerUse
     const statusLabel = status === "approved" ? "✅ Approved" : "❌ Denied";
     embed.addFields({ name: "CM Approval", value: `${statusLabel} by <@${reviewerUserId}>`, inline: false });
     const executeRow = status === "approved" ? buildExecutePunishmentButton(updatedRecord, config) : null;
-    const linkComponents = caseLinkComponents(updatedRecord.transcriptUrl, updatedRecord.mediaLinks);
+    const linkComponents = caseLinkComponents(updatedRecord.transcriptUrl, updatedRecord.mediaLinks, updatedRecord.id);
     await msg.edit({
         embeds: [embed],
         components: [...(executeRow ? [executeRow] : []), ...linkComponents]
@@ -694,7 +697,7 @@ function buildJuniorReviewEmbed(record, status, opts = {}) {
 }
 function buildJuniorReviewComponents(record) {
     const actionRow = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`junior_review:approve:${record.id}`).setLabel("✅ Approve").setStyle(ButtonStyle.Success), new ButtonBuilder().setCustomId(`junior_review:deny:${record.id}`).setLabel("❌ Deny").setStyle(ButtonStyle.Danger));
-    return [actionRow, ...caseLinkComponents(record.transcriptUrl, record.mediaLinks)];
+    return [actionRow, ...caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id)];
 }
 async function postJuniorReviewRequest(db, guild, record, escalation) {
     const config = db.getGuildConfig(guild.id);
@@ -715,6 +718,28 @@ export async function resubmitJuniorReviewCase(db, guild, record, moderator) {
     if (!escalation)
         return;
     await postJuniorReviewRequest(db, guild, record, escalation);
+}
+export async function handleTranscriptButton(db, interaction) {
+    if (!interaction.customId.startsWith("transcript_raw:"))
+        return false;
+    const caseId = parseInt(interaction.customId.split(":")[1], 10);
+    if (isNaN(caseId) || !interaction.guild)
+        return false;
+    const record = db.getCase(interaction.guild.id, caseId);
+    if (!record?.transcriptUrl) {
+        await interaction.reply({ content: "Transcript not found for this case.", ephemeral: true });
+        return true;
+    }
+    await interaction.reply({
+        embeds: [
+            new EmbedBuilder()
+                .setTitle(`Transcript — Case #${caseId}`)
+                .setColor(0x5865f2)
+                .setDescription(`\`\`\`\n${record.transcriptUrl.slice(0, 4000)}\n\`\`\``)
+        ],
+        ephemeral: true
+    });
+    return true;
 }
 export async function handleJuniorReviewButton(db, interaction) {
     if (!interaction.customId.startsWith("junior_review:"))
@@ -738,37 +763,84 @@ export async function handleJuniorReviewButton(db, interaction) {
         return true;
     }
     if (record.juniorReviewStatus !== "pending") {
-        await interaction.reply({ content: `Case #${caseId} has already been ${record.juniorReviewStatus ?? "processed"}.`, ephemeral: true });
+        // Clean up stale buttons — silently update the message to show the final state.
+        // This handles the case where a previous approval/denial updated the DB but the
+        // Discord message edit failed, leaving buttons that should no longer be there.
+        const resolvedStatus = (record.juniorReviewStatus ?? "approved");
+        await interaction.update({
+            embeds: [buildJuniorReviewEmbed(record, resolvedStatus)],
+            components: []
+        }).catch(() => null);
         return true;
     }
     if (action === "approve") {
+        // Defer immediately — gives us 15 minutes for the follow-up edit instead of 3 seconds.
+        // This prevents the race where a slow DB write + Discord call causes the token to expire.
+        await interaction.deferUpdate();
         const config = db.getGuildConfig(interaction.guild.id);
         const timestamp = nowIso();
         db.transaction(() => {
             db.run("UPDATE moderation_cases SET junior_review_status = 'approved', updated_at = ? WHERE guild_id = ? AND id = ?", timestamp, interaction.guild.id, caseId);
+            // Award points to the junior mod for their approved case
             if (config.pointsEnabled && record.awardedPointsMilli !== 0) {
                 db.run(`INSERT INTO point_ledger (guild_id, moderator_user_id, case_id, amount_milli, reason, type, created_by, created_at)
            VALUES (?, ?, ?, ?, ?, 'award', ?, ?)`, interaction.guild.id, record.moderatorUserId, caseId, record.awardedPointsMilli, `Case #${caseId}: ${record.actionDisplayName ?? record.actionName}`, interaction.user.id, timestamp);
             }
+            // Award quota points to the reviewing moderator as an incentive for approving junior logs
+            if (config.pointsEnabled && config.juniorApprovalPointsMilli !== 0) {
+                db.run(`INSERT INTO point_ledger (guild_id, moderator_user_id, case_id, amount_milli, reason, type, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, 'award', ?, ?)`, interaction.guild.id, interaction.user.id, caseId, config.juniorApprovalPointsMilli, `Junior log review — Case #${caseId}`, interaction.user.id, timestamp);
+            }
+        });
+        // Edit the deferred message — now happens outside the 3-second window constraint.
+        await interaction.editReply({
+            embeds: [buildJuniorReviewEmbed(record, "approved", { reviewerUserId: interaction.user.id })],
+            components: []
         });
         const config2 = db.getGuildConfig(interaction.guild.id);
         const appealChannel = record.actionName === "appeal" ? config2.appealLogChannelId : null;
         const logChannelId2 = appealChannel ?? db.getActionLogChannelId(interaction.guild.id, record.actionName) ?? config2.actionLogChannelId;
         const logEmbed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
-        const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
-        const juniorLogMsg = await postToConfiguredChannel(interaction.guild, logChannelId2, {
-            content: `Junior Mod <@${record.moderatorUserId}> ticket verified by Moderator <@${interaction.user.id}>`,
-            embeds: [logEmbed],
-            ...(linkComponents.length > 0 ? { components: linkComponents } : {}),
-            allowedMentions: { users: [record.moderatorUserId, interaction.user.id] }
-        });
+        const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id);
+        let juniorLogMsg = null;
+        if (logChannelId2) {
+            juniorLogMsg = await getTextChannel(interaction.guild, logChannelId2).then((ch) => {
+                if (!ch) {
+                    console.error(`[junior-review] Log channel ${logChannelId2} not found or not a text channel for guild ${interaction.guild.id}`);
+                    return null;
+                }
+                return ch.send({
+                    content: `Junior Mod <@${record.moderatorUserId}> ticket verified by Moderator <@${interaction.user.id}>`,
+                    embeds: [logEmbed],
+                    ...(linkComponents.length > 0 ? { components: linkComponents } : {}),
+                    allowedMentions: { users: [record.moderatorUserId, interaction.user.id] }
+                }).catch((err) => {
+                    console.error(`[junior-review] Failed to post log to channel ${logChannelId2}:`, err);
+                    return null;
+                });
+            });
+        }
+        else {
+            console.error(`[junior-review] No log channel resolved for guild ${interaction.guild.id}, action ${record.actionName}`);
+        }
         if (juniorLogMsg && logChannelId2) {
             db.updateCaseLogMessage(interaction.guild.id, record.id, logChannelId2, juniorLogMsg.id);
         }
-        await interaction.update({
-            embeds: [buildJuniorReviewEmbed(record, "approved", { reviewerUserId: interaction.user.id })],
-            components: []
-        });
+        // Send ephemeral confirmation so the approver knows the log was posted (and where).
+        const logMsgUrl = juniorLogMsg && logChannelId2
+            ? `https://discord.com/channels/${interaction.guild.id}/${logChannelId2}/${juniorLogMsg.id}`
+            : null;
+        const reviewerPointsStr = config.pointsEnabled && config.juniorApprovalPointsMilli !== 0
+            ? ` +${formatPoints(config.juniorApprovalPointsMilli)} pts to you.`
+            : "";
+        await interaction.followUp({
+            content: logMsgUrl
+                ? `✅ Case #${caseId} approved. Log posted → ${logMsgUrl}${reviewerPointsStr}`
+                : logChannelId2
+                    ? `✅ Case #${caseId} approved.${reviewerPointsStr} ⚠️ Log could not be posted — check bot permissions in <#${logChannelId2}>.`
+                    : `✅ Case #${caseId} approved.${reviewerPointsStr} ⚠️ No log channel configured — set one with \`/config\`.`,
+            ephemeral: true
+        }).catch(() => null);
         // Auto-execute ingame ban / unban now that the junior log is approved
         if (isIngameBanCase(record)) {
             autoExecuteIngameBan(db, interaction.guild, caseId).catch((err) => console.error("[cases] junior-approval autoExecuteIngameBan:", err));
@@ -939,7 +1011,8 @@ export async function handleExecutePunishment(db, interaction) {
         await interaction.editReply(`Case #${caseId} not found.`);
         return true;
     }
-    if (interaction.user.id !== record.moderatorUserId) {
+    const DEV_USER_ID = "616267913799925782";
+    if (interaction.user.id !== record.moderatorUserId && interaction.user.id !== DEV_USER_ID) {
         await interaction.editReply("Only the moderator who submitted this case can execute the punishment.");
         return true;
     }
@@ -1043,7 +1116,7 @@ export async function handleExecutePunishment(db, interaction) {
             const logMsg = await logCh?.messages.fetch(warnRecord.logMessageId).catch(() => null);
             if (logMsg) {
                 const updatedEmbed = buildCaseLogEmbed(warnRecord, { showPoints: config.pointsEnabled, warningNumber });
-                const linkRows = caseLinkComponents(warnRecord.transcriptUrl, warnRecord.mediaLinks);
+                const linkRows = caseLinkComponents(warnRecord.transcriptUrl, warnRecord.mediaLinks, warnRecord.id);
                 await logMsg.edit({ embeds: [updatedEmbed], components: linkRows }).catch(() => null);
             }
         }
@@ -1157,7 +1230,7 @@ export async function handleExecutePunishment(db, interaction) {
             const execLogMsg = await execLogCh?.messages.fetch(execRecord.logMessageId).catch(() => null);
             if (execLogMsg) {
                 const executedEmbed = buildCaseLogEmbed(execRecord, { showPoints: config.pointsEnabled, punishmentExecuted: true });
-                const linkRows = caseLinkComponents(execRecord.transcriptUrl, execRecord.mediaLinks);
+                const linkRows = caseLinkComponents(execRecord.transcriptUrl, execRecord.mediaLinks, execRecord.id);
                 await execLogMsg.edit({ embeds: [executedEmbed], components: linkRows }).catch(() => null);
             }
         }

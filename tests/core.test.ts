@@ -120,6 +120,27 @@ describe("database defaults", () => {
     assert.equal(db.getGuildConfig("guild-1").pointsEnabled, true);
     db.close();
   });
+
+  it("claims each evidence archive source attachment only once", () => {
+    const db = makeDb();
+    db.ensureGuild("guild-1");
+    const values = {
+      guildId: "guild-1",
+      sourceAttachmentKey: "attachment:guild-1:message-1:attachment-1",
+      sourceMessageUrl: "https://discord.com/channels/guild-1/channel-1/message-1",
+      moderatorUserId: "mod-1"
+    };
+
+    assert.equal(db.claimEvidenceArchive(values), true);
+    assert.equal(db.claimEvidenceArchive(values), false);
+
+    db.completeEvidenceArchive(values.guildId, values.sourceAttachmentKey, "https://discord.com/channels/guild-1/archive/message-2");
+    assert.equal(
+      db.getEvidenceArchiveBySourceKey(values.guildId, values.sourceAttachmentKey)?.archivedMessageUrl,
+      "https://discord.com/channels/guild-1/archive/message-2"
+    );
+    db.close();
+  });
 });
 
 describe("case embeds", () => {

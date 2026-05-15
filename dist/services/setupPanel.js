@@ -67,7 +67,8 @@ function buildPanelEmbed(db, guildId) {
     // Optional / specialised channels
     const optionalField = [
         ch(config.evidenceArchiveChannelId, "Evidence Archive", true),
-        ch(config.stewardLogChannelId, "Steward Log", true)
+        ch(config.stewardLogChannelId, "Steward Log", true),
+        ch(config.shoutsChannelId, "Shouts", true)
     ].join("\n");
     const behaviorField = [
         tog(config.interactiveLogEnabled, "Interactive Log"),
@@ -164,7 +165,7 @@ function buildOptionalModal(db, guildId) {
     return new ModalBuilder()
         .setCustomId("cfg_panel:modal:optional")
         .setTitle("Edit Optional / Extra Config")
-        .addComponents(ci("evidence_archive", "Evidence Archive", c.evidenceArchiveChannelId), ci("steward_log", "Steward Log", c.stewardLogChannelId), ci("appeal_log", "Appeal Log", c.appealLogChannelId), ri("seniorMod", "Senior Mod Role", getRole("seniorMod")), ri("can_register", "Can Register Role", c.registrationRoleId));
+        .addComponents(ci("evidence_archive", "Evidence Archive", c.evidenceArchiveChannelId), ci("steward_log", "Steward Log", c.stewardLogChannelId), ci("shouts", "Shouts Channel", c.shoutsChannelId), ri("seniorMod", "Senior Mod Role", getRole("seniorMod")), ri("can_register", "Can Register Role", c.registrationRoleId));
 }
 // ── Button handler ────────────────────────────────────────────────────────────
 export async function handleSetupPanelButton(db, interaction) {
@@ -306,7 +307,7 @@ export async function handleSetupPanelModal(db, interaction) {
         const channelMap = [
             ["evidence_archive", "evidence_archive_channel_id"],
             ["steward_log", "steward_log_channel_id"],
-            ["appeal_log", "appeal_log_channel_id"]
+            ["shouts", "shouts_channel_id"]
         ];
         const chUpdates = {};
         for (const [fieldId, dbKey] of channelMap) {

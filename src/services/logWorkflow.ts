@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -17,15 +17,16 @@ import {
   TextInputStyle
 } from "discord.js";
 import type { Attachment, Message, TextChannel } from "discord.js";
-import type { AppDatabase } from "../db.js";
+import { PENDING_EVIDENCE_ARCHIVE_URL, type AppDatabase } from "../db.js";
 import { autoExecuteIngameBan, autoExecuteIngameUnban, buildCaseLogEmbed, buildExecutePunishmentButton, createCase, effectiveActionPoints, formatLoggedActionName, isIngameBanAppealAccepted, isIngameBanCase, parsePunishmentLength, resubmitJuniorReviewCase, type CaseTarget } from "./cases.js";
 import type { CaseMediaLink, ModerationCase } from "../types.js";
 import { formatPoints, truncate } from "../utils/format.js";
-import { caseLinkComponents, getTextChannel, isAdminMember } from "../utils/discord.js";
+import { caseLinkComponents, getTextChannel, isAdminMember, normalizeHttpUrl } from "../utils/discord.js";
 import { getStaffTier } from "../utils/discord.js";
 import { colors } from "../utils/theme.js";
 
 type LogStage =
+  | "ticket_question"
   | "select"
   | "discord_type"
   | "ingame_subtype"
@@ -54,9 +55,10 @@ type LogDraft = {
   evidence: string | null;
   notes: string | null;
   noAction: boolean;
-  nonTicketAction: boolean;
+  isTicketedAction: boolean | null;
   transcriptUrl: string | null;
   mediaLinks: CaseMediaLink[];
+  mediaMessageIds: string[];
   mediaCaptureEnabled: boolean;
   happenedAt: string | null;
   isHeadMod: boolean;
@@ -80,6 +82,11 @@ const sessionsByUser = new Map<string, string>();
 // No inactivity TTL — drafts persist until explicitly cancelled, submitted, or 48 h old.
 const DRAFT_STALE_MS = 48 * 60 * 60 * 1000;
 const MAX_MEDIA_LINKS = 20;
+
+// Prevents double-archiving when Discord replays the same MessageCreate event on
+// gateway RESUME (which happens after every crash/restart cycle).
+// Keyed by message.id; entries expire after 5 minutes.
+const processedMediaMessages = new Set<string>();
 
 // ── Draft persistence ───────────────────────────────────────────────────────
 
@@ -116,9 +123,10 @@ export function injectDraftFromDeniedCase(record: ModerationCase) {
     evidence: record.evidence,
     notes: record.notes,
     noAction: record.isNoAction,
-    nonTicketAction: false,
+    isTicketedAction: null,
     transcriptUrl: record.transcriptUrl,
     mediaLinks: record.mediaLinks,
+    mediaMessageIds: [],
     mediaCaptureEnabled: false,
     happenedAt: null,
     isHeadMod: false,
@@ -154,8 +162,9 @@ function saveDraftToDisk(draft: LogDraft) {
       appealResult: draft.appealResult, ingameRuleResult: draft.ingameRuleResult,
       punishmentLength: draft.punishmentLength,
       targetInfo: draft.targetInfo, reason: draft.reason, evidence: draft.evidence,
-      notes: draft.notes, noAction: draft.noAction, nonTicketAction: draft.nonTicketAction,
+      notes: draft.notes, noAction: draft.noAction, isTicketedAction: draft.isTicketedAction,
       transcriptUrl: draft.transcriptUrl, mediaLinks: draft.mediaLinks,
+      mediaMessageIds: draft.mediaMessageIds,
       mediaCaptureEnabled: draft.mediaCaptureEnabled, happenedAt: draft.happenedAt,
       isHeadMod: draft.isHeadMod, editCaseId: draft.editCaseId,
       statusMessage: null,
@@ -172,6 +181,46 @@ function deleteDraftFromDisk(guildId: string, userId: string) {
   try { fs.unlinkSync(draftFilePath(guildId, userId)); } catch { /* already gone */ }
 }
 
+/**
+ * Migrate a raw parsed draft object to the current schema.
+ * Handles old drafts that were saved before schema changes:
+ * - Old drafts had `nonTicketAction: boolean` instead of `isTicketedAction: boolean | null`
+ * - Old drafts at stage "select" or later may be missing `isTicketedAction`
+ */
+function migrateDraftData(raw: Record<string, unknown>): SerializedDraft {
+  const data = raw as SerializedDraft & { nonTicketAction?: boolean };
+  // If isTicketedAction is missing (old schema), derive it from nonTicketAction if present
+  if (data.isTicketedAction === undefined || data.isTicketedAction === null) {
+    if (typeof data.nonTicketAction === "boolean") {
+      // nonTicketAction=true means it was NOT a ticket action → isTicketedAction=false
+      // nonTicketAction=false means unclear (could be either) → null so stage can continue
+      data.isTicketedAction = data.nonTicketAction ? false : null;
+    } else {
+      data.isTicketedAction = null;
+    }
+  }
+  const rawMediaLinks = Array.isArray(data.mediaLinks) ? data.mediaLinks : [];
+  const mediaMessageIds = new Set(Array.isArray(data.mediaMessageIds) ? data.mediaMessageIds.filter((id): id is string => typeof id === "string") : []);
+  for (const link of rawMediaLinks) {
+    if (isProofMediaLink(link)) {
+      const messageId = messageIdFromUrl(link.url);
+      if (messageId) mediaMessageIds.add(messageId);
+    }
+  }
+  data.mediaMessageIds = [...mediaMessageIds];
+  data.mediaLinks = rawMediaLinks.filter((link) => !isProofMediaLink(link));
+  return data;
+}
+
+function isProofMediaLink(link: CaseMediaLink) {
+  return link.label === "Proof" || /^Proof \d+$/.test(link.label);
+}
+
+function messageIdFromUrl(url: string) {
+  const match = /\/channels\/\d+\/\d+\/(\d+)/.exec(url);
+  return match?.[1] ?? null;
+}
+
 function loadDraftsFromDisk() {
   if (!draftsDir) return;
   let files: string[];
@@ -179,7 +228,7 @@ function loadDraftsFromDisk() {
   for (const file of files) {
     try {
       const raw = fs.readFileSync(path.join(draftsDir, file), "utf8");
-      const data = JSON.parse(raw) as SerializedDraft;
+      const data = migrateDraftData(JSON.parse(raw));
       if (Date.now() - data.updatedAt > DRAFT_STALE_MS) {
         fs.unlinkSync(path.join(draftsDir, file));
         continue;
@@ -203,7 +252,7 @@ function loadDraftBySessionId(sessionId: string): LogDraft | null {
   for (const file of files) {
     try {
       const raw = fs.readFileSync(path.join(draftsDir, file), "utf8");
-      const data = JSON.parse(raw) as SerializedDraft;
+      const data = migrateDraftData(JSON.parse(raw));
       if (data.id !== sessionId) continue;
       if (Date.now() - data.updatedAt > DRAFT_STALE_MS) {
         try { fs.unlinkSync(path.join(draftsDir, file)); } catch { /* ignore */ }
@@ -232,7 +281,7 @@ function loadDraftByUser(guildId: string, userId: string): LogDraft | null {
   const filePath = draftFilePath(guildId, userId);
   try {
     const raw = fs.readFileSync(filePath, "utf8");
-    const data = JSON.parse(raw) as SerializedDraft;
+    const data = migrateDraftData(JSON.parse(raw));
     if (Date.now() - data.updatedAt > DRAFT_STALE_MS) {
       try { fs.unlinkSync(filePath); } catch { /* ignore */ }
       return null;
@@ -368,9 +417,10 @@ export async function startEditLog(interaction: ChatInputCommandInteraction, db:
     evidence: record.evidence,
     notes: record.notes,
     noAction: record.isNoAction,
-    nonTicketAction: false,
+    isTicketedAction: null,
     transcriptUrl: record.transcriptUrl,
     mediaLinks: record.mediaLinks,
+    mediaMessageIds: [],
     mediaCaptureEnabled: false,
     happenedAt: null,
     isHeadMod,
@@ -451,8 +501,25 @@ export async function handleLogButton(db: AppDatabase, interaction: ButtonIntera
     return true;
   }
 
-  const draft = getDraft(db, sessionId, interaction) ?? await autoCreateDraft(db, interaction);
-  if (!draft) return true;
+  // If no draft is found, auto-create a fresh one and return — do NOT continue
+  // processing the original action, since the new draft starts at "select" stage
+  // and any field/modal action would immediately error.
+  const draft = getDraft(db, sessionId, interaction);
+  if (!draft) {
+    await autoCreateDraft(db, interaction);
+    return true;
+  }
+
+  if (action === "ticket_question") {
+    if (value === "yes") {
+      draft.isTicketedAction = true;
+    } else if (value === "no") {
+      draft.isTicketedAction = false;
+    }
+    draft.stage = "select";
+    await interaction.update(previewPayload(db, draft));
+    return true;
+  }
 
   if (action === "action") {
     const selected = resolveLogAction(value);
@@ -566,6 +633,14 @@ export async function handleLogButton(db: AppDatabase, interaction: ButtonIntera
       draft.stage = "ingame_rule_result";
     } else if (draft.stage === "fields") {
       draft.stage = "confirm";
+    } else if (draft.stage === "select") {
+      draft.stage = "ticket_question";
+      draft.actionName = null;
+      draft.actionDisplayName = null;
+      draft.appealType = null;
+      draft.appealResult = null;
+      draft.ingameRuleResult = null;
+      draft.mediaCaptureEnabled = false;
     } else {
       draft.stage = "select";
       draft.actionName = null;
@@ -598,13 +673,6 @@ export async function handleLogButton(db: AppDatabase, interaction: ButtonIntera
     return true;
   }
 
-  if (action === "toggle_non_ticket") {
-    if (draft.stage !== "fields") return true;
-    draft.nonTicketAction = !draft.nonTicketAction;
-    await interaction.update(previewPayload(db, draft));
-    return true;
-  }
-
   if (action === "submit") {
     if (draft.stage !== "fields") {
       await interaction.reply({ content: "Click Next and finish the log fields before submitting.", ephemeral: true });
@@ -631,8 +699,11 @@ export async function handleLogModal(db: AppDatabase, interaction: ModalSubmitIn
   }
 
   const [, sessionId, action, value] = interaction.customId.split(":");
-  const draft = getDraft(db, sessionId, interaction) ?? await autoCreateDraft(db, interaction);
-  if (!draft) return true;
+  const draft = getDraft(db, sessionId, interaction);
+  if (!draft) {
+    await autoCreateDraft(db, interaction);
+    return true;
+  }
   if (action !== "save") return false;
 
   saveModalFields(draft, value ?? "info", interaction);
@@ -646,6 +717,14 @@ export async function handleLogModal(db: AppDatabase, interaction: ModalSubmitIn
 
 export async function handleLogMediaMessage(db: AppDatabase, message: Message) {
   if (!message.guild || message.author.bot || message.attachments.size === 0) return false;
+
+  // Hard gate: if Discord fires the same MessageCreate twice (common on gateway RESUME
+  // after a crash), skip the second one entirely. The lock expires after 5 minutes so
+  // a legitimate re-send of a NEW message with the same content is never blocked.
+  if (processedMediaMessages.has(message.id)) return false;
+  processedMediaMessages.add(message.id);
+  setTimeout(() => processedMediaMessages.delete(message.id), 5 * 60_000);
+
   const draftId = sessionsByUser.get(sessionUserKey(message.guild.id, message.author.id));
   const draft = draftId ? sessions.get(draftId) : null;
   if (!draft || !draft.mediaCaptureEnabled || draft.channelId !== message.channelId) return false;
@@ -660,42 +739,45 @@ export async function handleLogMediaMessage(db: AppDatabase, message: Message) {
     await draft.editReply(previewPayload(db, draft)).catch(() => null);
   }
 
-  // Immediately archive newly-added links while Discord CDN URLs are still fresh.
-  // This prevents the "linking original messages instead of archive" bug caused by
-  // CDN URL expiry when archiving is deferred to submit time.
+  // Archive newly-added file links while the Discord CDN URLs are still fresh.
+  // Each link carries its own `archived` flag — if it's already true this is a no-op,
+  // making it safe to call even if somehow this handler fires twice for the same message.
   const config = db.getGuildConfig(draft.guildId);
   if (config.evidenceArchiveChannelId) {
-    const linksToArchive = draft.mediaLinks.slice(prevCount).filter((l) => l.sourceUrl);
-    if (linksToArchive.length > 0) {
+    // Collect index+link pairs for every newly-added link that still needs archiving.
+    const toArchive: Array<{ idx: number }> = [];
+    for (let i = prevCount; i < draft.mediaLinks.length; i++) {
+      const l = draft.mediaLinks[i];
+      if (l.sourceUrl && !l.archived) toArchive.push({ idx: i });
+    }
+
+    if (toArchive.length > 0) {
       const archiveChannel = await getTextChannel(message.guild, config.evidenceArchiveChannelId);
       if (archiveChannel) {
-        for (let i = 0; i < linksToArchive.length; i++) {
-          const link = linksToArchive[i];
-          const draftIdx = draft.mediaLinks.indexOf(link);
-          if (draftIdx === -1) continue;
+        for (let i = 0; i < toArchive.length; i++) {
+          const { idx } = toArchive[i];
+          const link = draft.mediaLinks[idx];
+          // Guard: re-check archived in case another concurrent handler beat us here
+          if (!link || link.archived || !link.sourceUrl) continue;
 
-          draft.statusMessage = `⏳ Archiving ${i + 1}/${linksToArchive.length}...`;
+          draft.statusMessage = `⏳ Archiving ${i + 1}/${toArchive.length}...`;
           if (draft.editReply) await draft.editReply(previewPayload(db, draft)).catch(() => null);
 
           try {
-            const response = await fetch(link.sourceUrl!);
-            if (response.ok) {
-              const buffer = Buffer.from(await response.arrayBuffer());
-              const ext = extFromUrl(link.sourceUrl!);
-              const builder = new AttachmentBuilder(buffer, { name: `evidence${ext}` });
-              const archiveMsg = await (archiveChannel as TextChannel).send({ files: [builder] });
-              // Set url to archived message; clear sourceUrl so submit-time archiving skips it
-              draft.mediaLinks[draftIdx] = { label: link.label, kind: link.kind, url: archiveMsg.url, sourceUrl: null };
-            }
-          } catch {
-            // Archive failed — original message URL is kept as fallback
+            draft.mediaLinks[idx] = await archiveMediaLinkOnce(db, message.guild, archiveChannel as TextChannel, link, message.author.id);
+            saveDraftToDisk(draft);
+          } catch (err) {
+            // Archive failed — keep original message URL as permanent fallback.
+            // archived stays false so submit-time can retry if CDN URL is still valid.
+            console.error("[logWorkflow] Early archive failed:", err);
           }
         }
+      } else {
+        console.error(`[logWorkflow] Archive channel ${config.evidenceArchiveChannelId} not found`);
       }
     }
+
     draft.statusMessage = null;
-    // Persist the updated mediaLinks (sourceUrl cleared on archived items) so that
-    // if the bot crashes and reloads from disk, submit-time archiving won't re-upload.
     saveDraftToDisk(draft);
   }
 
@@ -711,7 +793,7 @@ function createDraft(guildId: string, userId: string, channelId: string | null, 
     guildId,
     userId,
     channelId,
-    stage: "select",
+    stage: "ticket_question",
     actionName: null,
     actionDisplayName: null,
     appealType: null,
@@ -723,9 +805,10 @@ function createDraft(guildId: string, userId: string, channelId: string | null, 
     evidence: null,
     notes: null,
     noAction: false,
-    nonTicketAction: false,
+    isTicketedAction: null,
     transcriptUrl: null,
     mediaLinks: [],
+    mediaMessageIds: [],
     mediaCaptureEnabled: false,
     happenedAt: null,
     isHeadMod,
@@ -754,6 +837,9 @@ function getDraft(db: AppDatabase, sessionId: string | undefined, interaction: B
     return null;
   }
   touchDraft(draft);
+  // Rebind editReply to the current interaction so handleLogMediaMessage can
+  // update the embed even after a bot restart (when the old token has expired).
+  draft.editReply = (payload) => interaction.editReply(payload);
   return draft;
 }
 
@@ -786,6 +872,7 @@ async function autoCreateDraft(db: AppDatabase, interaction: ButtonInteraction |
 
 function stageDescription(draft: LogDraft): string {
   switch (draft.stage) {
+    case "ticket_question": return "Are you logging a ticketed action?";
     case "select": return "Step 1: choose the type of moderation log to create.";
     case "discord_type": return "Step 2: choose the Discord action type.";
     case "ingame_subtype": return "Step 2: what kind of ingame action?";
@@ -844,13 +931,15 @@ function previewPayload(db: AppDatabase, draft: LogDraft) {
 
   return {
     content: [
-      draft.stage === "select"
-        ? "Choose a log type to begin."
-        : draft.stage === "confirm"
-          ? "Log type selected. Press Next to fill the log fields, or Cancel to stop."
-          : draft.stage === "fields"
-            ? "Build the log, review the preview, then press Submit."
-            : "Select an option to continue.",
+      draft.stage === "ticket_question"
+        ? "Answer the question below to begin logging."
+        : draft.stage === "select"
+          ? "Choose a log type to begin."
+          : draft.stage === "confirm"
+            ? "Log type selected. Press Next to fill the log fields, or Cancel to stop."
+            : draft.stage === "fields"
+              ? "Build the log, review the preview, then press Submit."
+              : "Select an option to continue.",
       mediaLine
     ].filter(Boolean).join("\n"),
     embeds: [embed],
@@ -860,6 +949,7 @@ function previewPayload(db: AppDatabase, draft: LogDraft) {
 
 function draftComponents(draft: LogDraft, disabled = false, db?: AppDatabase) {
   switch (draft.stage) {
+    case "ticket_question": return ticketQuestionComponents(draft, disabled);
     case "select": return selectComponents(draft, disabled);
     case "discord_type": return discordTypeComponents(draft, disabled);
     case "ingame_subtype": return ingameSubtypeComponents(draft, disabled);
@@ -870,6 +960,28 @@ function draftComponents(draft: LogDraft, disabled = false, db?: AppDatabase) {
     case "confirm": return confirmComponents(draft, disabled);
     default: return fieldsComponents(draft, disabled, db);
   }
+}
+
+function ticketQuestionComponents(draft: LogDraft, disabled = false) {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`log:${draft.id}:ticket_question:yes`)
+        .setLabel("Yes")
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(disabled),
+      new ButtonBuilder()
+        .setCustomId(`log:${draft.id}:ticket_question:no`)
+        .setLabel("No")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(disabled),
+      new ButtonBuilder()
+        .setCustomId(`log:${draft.id}:cancel`)
+        .setLabel("Cancel")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(disabled)
+    )
+  ];
 }
 
 function selectComponents(draft: LogDraft, disabled = false) {
@@ -993,8 +1105,6 @@ function appealResultComponents(draft: LogDraft, disabled = false) {
   ];
 }
 
-const TRANSCRIPT_REQUIRED_ACTIONS = new Set(["ticket", "discord", "discord-ban", "ban"]);
-
 function confirmComponents(draft: LogDraft, disabled = false) {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -1021,15 +1131,10 @@ function fieldsComponents(draft: LogDraft, disabled = false, db?: AppDatabase) {
       : [])
   ];
 
-  const needsTranscript = draft.actionName !== null && TRANSCRIPT_REQUIRED_ACTIONS.has(draft.actionName);
-
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(...row1Buttons),
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(`log:${draft.id}:media`).setLabel(draft.mediaCaptureEnabled ? "Attach Media On" : "Attach Media").setStyle(draft.mediaCaptureEnabled ? ButtonStyle.Success : ButtonStyle.Primary).setDisabled(disabled),
-      ...(needsTranscript
-        ? [new ButtonBuilder().setCustomId(`log:${draft.id}:toggle_non_ticket`).setLabel(draft.nonTicketAction ? "Non Ticket Action On" : "Non Ticket Action").setStyle(draft.nonTicketAction ? ButtonStyle.Success : ButtonStyle.Secondary).setDisabled(disabled)]
-        : []),
       new ButtonBuilder().setCustomId(`log:${draft.id}:submit`).setLabel("Submit").setStyle(ButtonStyle.Success).setDisabled(disabled),
       new ButtonBuilder().setCustomId(`log:${draft.id}:back`).setLabel("Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
       new ButtonBuilder().setCustomId(`log:${draft.id}:cancel`).setLabel("Cancel").setStyle(ButtonStyle.Danger).setDisabled(disabled)
@@ -1162,9 +1267,12 @@ async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draf
       ?? (draft.transcriptUrl ? "See transcript." : null);
 
     const config = db.getGuildConfig(draft.guildId);
-    const archivedLinks = config.evidenceArchiveChannelId && draft.mediaLinks.some((l) => l.sourceUrl)
-      ? await archiveMediaLinks(interaction.guild!, config.evidenceArchiveChannelId, draft.mediaLinks, interaction.user.id)
-      : draft.mediaLinks;
+    // Run the fallback archiver — it is a no-op for links already marked archived: true,
+    // so calling it unconditionally is safe and never causes double-uploads.
+    const needsArchiving = config.evidenceArchiveChannelId && draft.mediaLinks.some((l) => l.sourceUrl && !l.archived);
+    const archivedLinks = needsArchiving
+      ? await archiveMediaLinks(db, interaction.guild!, config.evidenceArchiveChannelId!, draft.mediaLinks, interaction.user.id)
+      : draft.mediaLinks.map(({ sourceUrl: _s, ...rest }) => rest);
 
     const record = await createCase(db, {
       guild: interaction.guild!,
@@ -1197,7 +1305,7 @@ async function submitDraft(db: AppDatabase, interaction: ButtonInteraction, draf
 
     const config2 = db.getGuildConfig(draft.guildId);
     const executeRow = buildExecutePunishmentButton(record, config2);
-    const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+    const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id);
     await interaction.editReply({
       content: config2.pointsEnabled ? `Submitted case #${record.id} for ${formatPoints(record.awardedPointsMilli)} points.` : `Submitted case #${record.id}.`,
       embeds: [buildCaseLogEmbed(record, { showPoints: config2.pointsEnabled })],
@@ -1229,9 +1337,10 @@ async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteracti
       ?? (draft.transcriptUrl ? "See transcript." : null);
 
     const config = db.getGuildConfig(draft.guildId);
-    const archivedLinks = config.evidenceArchiveChannelId && draft.mediaLinks.some((l) => l.sourceUrl)
-      ? await archiveMediaLinks(interaction.guild!, config.evidenceArchiveChannelId, draft.mediaLinks, interaction.user.id)
-      : draft.mediaLinks;
+    const needsArchiving = config.evidenceArchiveChannelId && draft.mediaLinks.some((l) => l.sourceUrl && !l.archived);
+    const archivedLinks = needsArchiving
+      ? await archiveMediaLinks(db, interaction.guild!, config.evidenceArchiveChannelId!, draft.mediaLinks, interaction.user.id)
+      : draft.mediaLinks.map(({ sourceUrl: _s, ...rest }) => rest);
 
     const timestamp = new Date().toISOString();
     db.run(
@@ -1260,7 +1369,7 @@ async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteracti
 
     // Update the original log channel message with fresh embed + execute button
     const executeRow = buildExecutePunishmentButton(updatedRecord, config);
-    const linkRows = caseLinkComponents(updatedRecord.transcriptUrl, updatedRecord.mediaLinks);
+    const linkRows = caseLinkComponents(updatedRecord.transcriptUrl, updatedRecord.mediaLinks, updatedRecord.id);
     if (updatedRecord.logChannelId && updatedRecord.logMessageId) {
       const logChannel = await getTextChannel(interaction.guild!, updatedRecord.logChannelId);
       const logMsg = await logChannel?.messages.fetch(updatedRecord.logMessageId).catch(() => null);
@@ -1288,39 +1397,108 @@ async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteracti
   }
 }
 
+/**
+ * Submit-time fallback archiver.
+ * Only archives links where archived !== true AND sourceUrl is set (early archive missed them).
+ * Links already marked archived: true are passed through untouched — no double-upload ever.
+ * All output links have sourceUrl stripped (temporary CDN URLs should never reach the DB).
+ */
 async function archiveMediaLinks(
+  db: AppDatabase,
   guild: Parameters<typeof getTextChannel>[0],
   archiveChannelId: string,
   links: CaseMediaLink[],
   _moderatorId: string
 ): Promise<CaseMediaLink[]> {
   const archiveChannel = await getTextChannel(guild, archiveChannelId);
-  if (!archiveChannel) return links;
+  // Can't reach archive channel — strip sourceUrls and return as-is
+  if (!archiveChannel) return links.map(({ sourceUrl: _s, ...rest }) => rest);
 
-  const archived: CaseMediaLink[] = [];
+  const result: CaseMediaLink[] = [];
   for (const link of links) {
-    if (!link.sourceUrl) {
-      archived.push(link);
+    // Already archived by early path, or a non-file link with no sourceUrl - skip
+    if (link.archived || !link.sourceUrl) {
+      const { sourceUrl: _s, ...rest } = link;
+      result.push(rest);
       continue;
     }
     try {
-      const response = await fetch(link.sourceUrl);
-      if (!response.ok) {
-        archived.push(link);
-        continue;
-      }
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const ext = extFromUrl(link.sourceUrl);
-      const attachment = new AttachmentBuilder(buffer, { name: `evidence${ext}` });
-      const msg = await (archiveChannel as TextChannel).send({ files: [attachment] });
-      // Clear sourceUrl after successful archive — marks it as "already archived" so
-      // future calls (e.g. via /logedit) don't attempt to re-fetch an expired CDN URL.
-      archived.push({ label: link.label, kind: link.kind, url: msg.url, sourceUrl: null });
-    } catch {
-      archived.push(link);
+      result.push(await archiveMediaLinkOnce(db, guild, archiveChannel as TextChannel, link, _moderatorId));
+    } catch (err) {
+      console.error("[logWorkflow] Submit-time archive fallback failed:", err);
+      // CDN URL likely expired — store original message URL (permanent jump-link)
+      const { sourceUrl: _s, ...rest } = link;
+      result.push({ ...rest, archived: false });
     }
   }
-  return archived;
+  return result;
+}
+
+async function archiveMediaLinkOnce(
+  db: AppDatabase,
+  guild: Parameters<typeof getTextChannel>[0],
+  archiveChannel: TextChannel,
+  link: CaseMediaLink,
+  moderatorId: string
+): Promise<CaseMediaLink> {
+  if (link.archived || !link.sourceUrl) {
+    const { sourceUrl: _s, ...rest } = link;
+    return rest;
+  }
+
+  const archiveKey = link.archiveKey ?? fallbackArchiveKey(guild.id, link.sourceUrl);
+  const existing = db.getEvidenceArchiveBySourceKey(guild.id, archiveKey);
+  if (isCompletedArchive(existing?.archivedMessageUrl)) {
+    return archivedMediaLink(link, existing!.archivedMessageUrl, archiveKey);
+  }
+
+  const claimed = db.claimEvidenceArchive({
+    guildId: guild.id,
+    sourceAttachmentKey: archiveKey,
+    sourceMessageUrl: link.url,
+    moderatorUserId: moderatorId
+  });
+
+  if (!claimed) {
+    const archivedUrl = await waitForCompletedEvidenceArchive(db, guild.id, archiveKey);
+    return archivedUrl ? archivedMediaLink(link, archivedUrl, archiveKey) : { ...link, archiveKey, archived: false };
+  }
+
+  try {
+    const response = await fetch(link.sourceUrl);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const ext = extFromUrl(link.sourceUrl);
+    const attachment = new AttachmentBuilder(buffer, { name: `evidence${ext}` });
+    const archiveMsg = await archiveChannel.send({ files: [attachment] });
+    db.completeEvidenceArchive(guild.id, archiveKey, archiveMsg.url);
+    return archivedMediaLink(link, archiveMsg.url, archiveKey);
+  } catch (error) {
+    db.deletePendingEvidenceArchive(guild.id, archiveKey);
+    throw error;
+  }
+}
+
+function isCompletedArchive(archivedMessageUrl?: string | null) {
+  return Boolean(archivedMessageUrl && archivedMessageUrl !== PENDING_EVIDENCE_ARCHIVE_URL);
+}
+
+async function waitForCompletedEvidenceArchive(db: AppDatabase, guildId: string, archiveKey: string) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const existing = db.getEvidenceArchiveBySourceKey(guildId, archiveKey);
+    if (isCompletedArchive(existing?.archivedMessageUrl)) return existing!.archivedMessageUrl;
+    if (!existing) return null;
+  }
+  return null;
+}
+
+function archivedMediaLink(link: CaseMediaLink, archivedMessageUrl: string, archiveKey: string): CaseMediaLink {
+  return { label: link.label, kind: link.kind, url: archivedMessageUrl, sourceUrl: null, archiveKey, archived: true };
+}
+
+function fallbackArchiveKey(guildId: string, sourceUrl: string) {
+  return `source:${guildId}:${createHash("sha256").update(sourceUrl).digest("hex")}`;
 }
 
 function extFromUrl(url: string): string {
@@ -1361,7 +1539,8 @@ function formatDraftInformation(draft: LogDraft) {
     draft.mediaLinks.length > 0 ? `Media: ${draft.mediaLinks.map((link) => link.label).join(", ")}` : null,
     `Notes: ${draft.notes ?? "None"}`,
     `No Action: ${draft.noAction ? "Yes" : "No"}`,
-    draft.transcriptUrl ? "Transcript: will show as a button" : null,
+    draft.isTicketedAction !== null ? `Ticketed Action: ${draft.isTicketedAction ? "Yes" : "No"}` : null,
+    draft.transcriptUrl ? `Transcript: ${normalizeHttpUrl(draft.transcriptUrl) ? "will show as a button" : "⚠️ not a valid http/https URL"}` : null,
     draft.punishmentLength ? `Punishment Length: ${draft.punishmentLength}` : null,
     draft.happenedAt ? `Happened At: ${draft.happenedAt}` : null,
     draft.appealType ? `Appeal Type: ${draft.appealType}` : null,
@@ -1414,13 +1593,21 @@ function missingRequiredFields(db: AppDatabase, draft: LogDraft) {
   if (!draft.actionName) missing.push("Action");
   if (!hasTarget(draft.targetInfo)) missing.push("Target");
   if (draft.actionName === "appeal" && !draft.appealResult) missing.push("Appeal Result");
-  if (draft.actionName && TRANSCRIPT_REQUIRED_ACTIONS.has(draft.actionName) && !draft.transcriptUrl && !draft.nonTicketAction) missing.push("Transcript Link");
+  if (draft.isTicketedAction === true) {
+    if (!draft.transcriptUrl) {
+      missing.push("Transcript Link");
+    } else if (!normalizeHttpUrl(draft.transcriptUrl)) {
+      missing.push("Valid Transcript URL (must be a valid http/https link)");
+    }
+  }
   return missing;
 }
 
 function addMediaLinks(draft: LogDraft, message: Message) {
+  draft.mediaMessageIds ??= [];
+  if (draft.mediaMessageIds.includes(message.id)) return 0;
+
   let added = 0;
-  const alreadyHasProofForMessage = draft.mediaLinks.some((l) => l.sourceUrl === null && l.url === message.url);
   // Dedup: track CDN URLs already captured (prevents double-sends on duplicate message events)
   const existingSourceUrls = new Set(draft.mediaLinks.map((l) => l.sourceUrl).filter(Boolean));
   for (const attachment of message.attachments.values()) {
@@ -1428,19 +1615,26 @@ function addMediaLinks(draft: LogDraft, message: Message) {
     if (existingSourceUrls.has(attachment.url)) continue; // already captured
     const kind = classifyAttachment(attachment);
     const label = nextMediaLabel(draft, kind);
-    // Store the original attachment URL as sourceUrl; archiving updates url + clears sourceUrl
-    draft.mediaLinks.push({ label, kind, url: message.url, sourceUrl: attachment.url });
+    // Store the CDN URL in sourceUrl; archiving will upload it, replace url, clear sourceUrl,
+    // and set archived: true. If archiving fails, archived stays false and url stays as the
+    // original message URL (permanent jump-link fallback).
+    draft.mediaLinks.push({
+      label,
+      kind,
+      url: message.url,
+      sourceUrl: attachment.url,
+      archiveKey: attachmentArchiveKey(draft.guildId, message.id, attachment.id),
+      archived: false
+    });
     existingSourceUrls.add(attachment.url);
     added += 1;
   }
-  // Add a permanent "Proof" jump-link to the original upload message.
-  // sourceUrl is null so archiveMediaLinks skips it and the URL stays permanent.
-  if (added > 0 && !alreadyHasProofForMessage) {
-    const proofCount = draft.mediaLinks.filter((l) => l.sourceUrl === null).length + 1;
-    const label = proofCount === 1 ? "Proof" : `Proof ${proofCount}`;
-    draft.mediaLinks.push({ label, kind: "file", url: message.url, sourceUrl: null });
-  }
+  if (added > 0) draft.mediaMessageIds.push(message.id);
   return added;
+}
+
+function attachmentArchiveKey(guildId: string, messageId: string, attachmentId: string) {
+  return `attachment:${guildId}:${messageId}:${attachmentId}`;
 }
 
 function classifyAttachment(attachment: Attachment): CaseMediaLink["kind"] {

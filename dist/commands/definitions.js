@@ -52,7 +52,7 @@ export function buildCommands(options = {}) {
         modshopCommand(),
         actionCommand(pointsEnabled),
         caseCommand(pointsEnabled),
-        ...(pointsEnabled ? [pointsCommand(), multiplierCommand()] : []),
+        ...(pointsEnabled ? [pointsCommand(), multiplierCommand(), checkpointsCommand(), multiCommand(), addpointsCommand(), removepointsCommand()] : []),
         new SlashCommandBuilder()
             .setName("strikes")
             .setDescription("View strike records.")
@@ -61,7 +61,7 @@ export function buildCommands(options = {}) {
             .setName("warnings")
             .setDescription("View the warning history for a Discord user.")
             .addUserOption((option) => option.setName("target").setDescription("Discord user to look up.").setRequired(true))
-            .setDefaultMemberPermissions(normalDefault),
+            .setDefaultMemberPermissions(juniorDefault),
         quotaCommand(pointsEnabled),
         ticketlogCommand(),
         new SlashCommandBuilder()
@@ -112,6 +112,7 @@ export function buildCommands(options = {}) {
         new SlashCommandBuilder()
             .setName("updatebot")
             .setDescription("Pull the latest code from GitHub and restart the bot.")
+            .addStringOption((o) => o.setName("notes").setDescription("Brief changelog shown in the shouts channel (e.g. 'Fixed X, added Y').").setRequired(false))
             .setDefaultMemberPermissions(ownerDefault),
         new SlashCommandBuilder()
             .setName("refresh")
@@ -162,6 +163,7 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "steward_log", "Steward action log channel (auto-posted on every executed punishment)."))
         .addChannelOption((option) => textChannelOption(option, "loa_channel", "LOA approval channel (requests are posted here for Head Mod+ to review)."))
         .addChannelOption((option) => textChannelOption(option, "loa_log_channel", "LOA log channel (approved LOAs are posted here)."))
+        .addChannelOption((option) => textChannelOption(option, "shouts_channel", "Shouts channel (bot restart announcements are posted here)."))
         .addUserOption((option) => option.setName("owner").setDescription("Owner/admin DM target."))
         .addStringOption((option) => option.setName("ticket_tool_bot_id").setDescription("Ticket Tool bot user ID.")))
         .addSubcommand((sub) => sub
@@ -170,7 +172,12 @@ function configCommand() {
         .addBooleanOption((option) => option.setName("interactive_log").setDescription("Enable /log button workflow."))
         .addBooleanOption((option) => option.setName("cm_approval").setDescription("Enable CM approval requirement for non-CM logs (default: on)."))
         .addStringOption((option) => option.setName("linked_server").setDescription("Guild ID of the linked community server for cross-server punishment enforcement."))
-        .addStringOption((option) => option.setName("moderation_invite").setDescription("Permanent invite link to include in punishment DMs (e.g. https://discord.gg/...).")))
+        .addStringOption((option) => option.setName("moderation_invite").setDescription("Permanent invite link to include in punishment DMs (e.g. https://discord.gg/...)."))
+        .addNumberOption((option) => option
+        .setName("junior_approval_points")
+        .setDescription("Quota points awarded to a mod for approving a junior log (default: 0.5). Set to 0 to disable.")
+        .setMinValue(0)
+        .setMaxValue(100)))
         .addSubcommand((sub) => sub
         .setName("check")
         .setDescription("Show which configs are set and which are missing."))
@@ -305,6 +312,36 @@ function multiplierCommand() {
         .addStringOption((option) => option.setName("ends_at").setDescription("Optional ISO date/time when it ends.")))
         .addSubcommand((sub) => sub.setName("clear").setDescription("Reset multiplier to 1x.").addStringOption((option) => option.setName("reason").setDescription("Why it was cleared.").setRequired(true)))
         .addSubcommand((sub) => sub.setName("view").setDescription("View active multiplier."))
+        .setDefaultMemberPermissions(headDefault);
+}
+function checkpointsCommand() {
+    return new SlashCommandBuilder()
+        .setName("checkpoints")
+        .setDescription("View your points total and the active staff leaderboard.")
+        .setDefaultMemberPermissions(juniorDefault);
+}
+function multiCommand() {
+    return new SlashCommandBuilder()
+        .setName("multi")
+        .setDescription("View the current point multiplier.")
+        .setDefaultMemberPermissions(juniorDefault);
+}
+function addpointsCommand() {
+    return new SlashCommandBuilder()
+        .setName("addpoints")
+        .setDescription("Manually add points to a moderator.")
+        .addUserOption((option) => option.setName("moderator").setDescription("Moderator to add points to.").setRequired(true))
+        .addNumberOption((option) => option.setName("amount").setDescription("Points to add.").setRequired(true))
+        .addStringOption((option) => option.setName("reason").setDescription("Reason for the adjustment.").setRequired(true))
+        .setDefaultMemberPermissions(headDefault);
+}
+function removepointsCommand() {
+    return new SlashCommandBuilder()
+        .setName("removepoints")
+        .setDescription("Manually remove points from a moderator.")
+        .addUserOption((option) => option.setName("moderator").setDescription("Moderator to remove points from.").setRequired(true))
+        .addNumberOption((option) => option.setName("amount").setDescription("Points to remove.").setRequired(true))
+        .addStringOption((option) => option.setName("reason").setDescription("Reason for the adjustment.").setRequired(true))
         .setDefaultMemberPermissions(headDefault);
 }
 function quotaCommand(pointsEnabled) {

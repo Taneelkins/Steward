@@ -252,10 +252,10 @@ const helpCommands: HelpCommand[] = [
   {
     id: "warnings",
     label: "/warnings",
-    access: "normal",
-    levels: ["moderator", "senior", "admin"],
+    access: "junior",
+    levels: ["junior", "moderator", "senior", "admin"],
     what: "Shows the full warning history for a Discord user — warning number, reason, issuing moderator, and timestamp.",
-    who: "Moderator and above.",
+    who: "Junior Moderator and above.",
     usage: ["`/warnings target:@user`"],
     examples: ["`/warnings target:@User`"],
     notes: [

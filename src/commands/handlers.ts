@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import path from "node:path";
 import {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -404,7 +405,7 @@ async function submitTypedLog(interaction: ChatInputCommandInteraction, db: AppD
   });
   const config = db.getGuildConfig(guild.id);
   const executeRow = buildExecutePunishmentButton(record, config);
-  const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+  const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id);
   await interaction.reply({
     content: caseReplyText(`Logged ${record.actionDisplayName ?? record.actionName}`, record.id, record.awardedPointsMilli, config.pointsEnabled),
     embeds: [buildCaseLogEmbed(record, { showPoints: config.pointsEnabled })],
@@ -494,13 +495,15 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     const cmApproval = interaction.options.getBoolean("cm_approval");
     const linkedServer = interaction.options.getString("linked_server");
     const moderationInvite = interaction.options.getString("moderation_invite");
+    const juniorApprovalPoints = interaction.options.getNumber("junior_approval_points");
     db.updateGuildConfig(guild.id, {
       interactive_log_enabled: interactiveLog === null ? undefined : interactiveLog ? 1 : 0,
       approval_enabled: cmApproval === null ? undefined : cmApproval ? 1 : 0,
       ...(linkedServer !== null ? { linked_guild_id: linkedServer || null } : {}),
-      ...(moderationInvite !== null ? { moderation_invite: moderationInvite || null } : {})
+      ...(moderationInvite !== null ? { moderation_invite: moderationInvite || null } : {}),
+      ...(juniorApprovalPoints !== null ? { junior_approval_points_milli: Math.round(juniorApprovalPoints * 1000) } : {})
     });
-    await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog, linkedServer, moderationInvite });
+    await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog, linkedServer, moderationInvite, juniorApprovalPoints });
     await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
     return;
   }
@@ -709,7 +712,7 @@ async function handleCase(interaction: ChatInputCommandInteraction, { db }: Comm
     await interaction.reply({
       content: caseReplyText("Logged", record.id, record.awardedPointsMilli, pointsEnabled),
       embeds: [buildCaseLogEmbed(record, { showPoints: pointsEnabled })],
-      components: caseLinkComponents(record.transcriptUrl, record.mediaLinks),
+      components: caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id),
       ephemeral: true
     });
     return;
@@ -773,7 +776,7 @@ async function handleCase(interaction: ChatInputCommandInteraction, { db }: Comm
     if (record.juniorReviewStatus === "pending") {
       embed.addFields({ name: "⏳ Awaiting Junior Review", value: "This case has not been reviewed by a Senior Moderator yet.", inline: false });
     }
-    const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks);
+    const linkRows = caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id);
     await interaction.reply({ embeds: [embed], components: linkRows, ephemeral: true });
     return;
   }
@@ -2096,7 +2099,7 @@ async function handleUpdateBot(interaction: ChatInputCommandInteraction, context
 
   const summary = [pullOutput.trim(), buildOutput.trim(), deployOutput.trim()].filter(Boolean).join("\n").slice(0, 1600);
   await interaction.editReply(`Update complete. Restarting bot...\n\`\`\`\n${summary}\n\`\`\``);
-  const dataDir = require("node:path").dirname(context.env.databasePath);
+  const dataDir = path.dirname(context.env.databasePath);
   const notes = interaction.options.getString("notes") ?? undefined;
   await postGoingDown(context.db, interaction.client, dataDir, notes).catch(() => null);
   setTimeout(() => process.exit(75), 500);
