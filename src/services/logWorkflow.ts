@@ -1413,15 +1413,25 @@ async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteracti
       ? await archiveMediaLinks(db, interaction.guild!, config.evidenceArchiveChannelId!, draft.mediaLinks, interaction.user.id)
       : draft.mediaLinks.map(({ sourceUrl: _s, ...rest }) => rest);
 
+    // Snapshot the old record BEFORE updating so we know the old channel
+    const oldRecord = db.getCase(draft.guildId, caseId);
+    if (!oldRecord) {
+      await interaction.followUp({ content: "Case not found.", ephemeral: true });
+      return;
+    }
+
     const timestamp = new Date().toISOString();
+    // NOTE: action_name + action_display_name are included so a type change is actually saved.
     db.run(
       `UPDATE moderation_cases SET
+        action_name = ?, action_display_name = ?,
         reason = ?, evidence = ?, notes = ?, transcript_url = ?,
         media_links_json = ?, punishment_length = ?, is_no_action = ?,
         appeal_type = ?, appeal_result = ?,
         roblox_username = ?, roblox_id = ?, discord_username = ?, discord_id = ?,
         junior_review_status = 'pending', updated_at = ?
        WHERE guild_id = ? AND id = ?`,
+      draft.actionName, draft.actionDisplayName ?? null,
       draft.reason ?? "No reason provided.", evidence, draft.notes ?? null,
       draft.transcriptUrl ?? null,
       archivedLinks.length > 0 ? JSON.stringify(archivedLinks) : null,
@@ -1438,27 +1448,78 @@ async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteracti
       return;
     }
 
-    // Update the original log channel message with fresh embed + execute button
+    const member = interaction.member as GuildMember;
+    const isJunior = getStaffTier(db, member) === "junior";
+
+    // Resolve the correct log channel for the (possibly changed) action type.
+    // Same logic as the junior-review approve handler in cases.ts.
+    const newChannelId = updatedRecord.actionName === "appeal"
+      ? (config.appealLogChannelId ?? config.actionLogChannelId)
+      : (db.getActionLogChannelId(draft.guildId, updatedRecord.actionName) ?? config.actionLogChannelId);
+
     const executeRow = buildExecutePunishmentButton(updatedRecord, config);
     const linkRows = caseLinkComponents(updatedRecord.transcriptUrl, updatedRecord.mediaLinks, updatedRecord.id);
-    if (updatedRecord.logChannelId && updatedRecord.logMessageId) {
-      const logChannel = await getTextChannel(interaction.guild!, updatedRecord.logChannelId);
-      const logMsg = await logChannel?.messages.fetch(updatedRecord.logMessageId).catch(() => null);
-      if (logMsg) {
-        await logMsg.edit({
-          embeds: [buildCaseLogEmbed(updatedRecord, { showPoints: config.pointsEnabled })],
-          components: [...(executeRow ? [executeRow] : []), ...linkRows]
-        }).catch(() => null);
-      }
-    }
+    const allComponents = [...(executeRow ? [executeRow] : []), ...linkRows];
+    const logEmbed = buildCaseLogEmbed(updatedRecord, { showPoints: config.pointsEnabled });
 
-    await resubmitJuniorReviewCase(db, interaction.guild!, updatedRecord, interaction.member as GuildMember);
-    removeDraft(draft);
-    await interaction.editReply({
-      content: `Case #${caseId} updated.`,
-      embeds: [buildCaseLogEmbed(updatedRecord, { showPoints: config.pointsEnabled })],
-      components: [...(executeRow ? [executeRow] : []), ...linkRows]
-    });
+    if (isJunior) {
+      // ── Junior edit: pull the log from the channel and require re-approval ──
+      // The old message (if any) is removed so stale info isn't visible while pending.
+      if (oldRecord.logChannelId && oldRecord.logMessageId) {
+        const oldChannel = await getTextChannel(interaction.guild!, oldRecord.logChannelId);
+        const oldMsg = await oldChannel?.messages.fetch(oldRecord.logMessageId).catch(() => null);
+        await oldMsg?.delete().catch(() => null);
+        // Clear the stored message reference — it will be re-set when approved
+        db.run(
+          "UPDATE moderation_cases SET log_channel_id = NULL, log_message_id = NULL WHERE guild_id = ? AND id = ?",
+          draft.guildId, caseId
+        );
+      }
+
+      // Post review request to juniorHelpChannel
+      await resubmitJuniorReviewCase(db, interaction.guild!, updatedRecord, member);
+
+      removeDraft(draft);
+      await interaction.editReply({
+        content: `Case #${caseId} updated and sent for re-approval. It will be posted to the correct log channel once a senior mod approves it.`,
+        embeds: [logEmbed],
+        components: []
+      });
+    } else {
+      // ── Non-junior edit: post directly to the correct channel ──
+      const channelChanged = oldRecord.logChannelId !== newChannelId;
+
+      if (channelChanged) {
+        // Delete old message from old channel (it's in the wrong place now)
+        if (oldRecord.logChannelId && oldRecord.logMessageId) {
+          const oldChannel = await getTextChannel(interaction.guild!, oldRecord.logChannelId);
+          const oldMsg = await oldChannel?.messages.fetch(oldRecord.logMessageId).catch(() => null);
+          await oldMsg?.delete().catch(() => null);
+        }
+        // Post fresh message in the correct channel
+        if (newChannelId) {
+          const newChannel = await getTextChannel(interaction.guild!, newChannelId);
+          const newMsg = await newChannel?.send({ embeds: [logEmbed], components: allComponents }).catch(() => null);
+          if (newMsg) {
+            db.updateCaseLogMessage(draft.guildId, caseId, newChannelId, newMsg.id);
+          }
+        }
+      } else {
+        // Same channel — edit the existing message in place
+        if (oldRecord.logChannelId && oldRecord.logMessageId) {
+          const logChannel = await getTextChannel(interaction.guild!, oldRecord.logChannelId);
+          const logMsg = await logChannel?.messages.fetch(oldRecord.logMessageId).catch(() => null);
+          await logMsg?.edit({ embeds: [logEmbed], components: allComponents }).catch(() => null);
+        }
+      }
+
+      removeDraft(draft);
+      await interaction.editReply({
+        content: `Case #${caseId} updated.`,
+        embeds: [logEmbed],
+        components: allComponents
+      });
+    }
   } catch (err) {
     draft.stage = "fields";
     await interaction.followUp({
