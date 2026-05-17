@@ -109,7 +109,9 @@ export async function postStartupAnnouncement(db: AppDatabase, client: Client, d
 
   let signal: RestartSignal;
   try {
-    signal = JSON.parse(fs.readFileSync(signalPath, "utf8")) as RestartSignal;
+    // Strip UTF-8 BOM if present (PowerShell writes files with BOM by default)
+    const raw = fs.readFileSync(signalPath, "utf8").replace(/^﻿/, "");
+    signal = JSON.parse(raw) as RestartSignal;
     fs.unlinkSync(signalPath);
   } catch {
     return;
@@ -130,13 +132,17 @@ export async function postStartupAnnouncement(db: AppDatabase, client: Client, d
       .setTimestamp();
 
     for (const { channelId, messageId } of signal.messages) {
-      // Find the channel across all guilds
+      // Fetch the channel across all guilds — don't rely on cache (may be empty at startup)
       let channel: TextChannel | NewsChannel | ThreadChannel | null = null;
       for (const guild of client.guilds.cache.values()) {
-        const ch = guild.channels.cache.get(channelId);
-        if (ch && (ch.isTextBased()) && "send" in ch) {
-          channel = ch as TextChannel | NewsChannel | ThreadChannel;
-          break;
+        try {
+          const ch = await guild.channels.fetch(channelId);
+          if (ch && ch.isTextBased() && "send" in ch) {
+            channel = ch as TextChannel | NewsChannel | ThreadChannel;
+            break;
+          }
+        } catch {
+          // not in this guild, try the next one
         }
       }
       if (!channel) continue;
@@ -148,26 +154,32 @@ export async function postStartupAnnouncement(db: AppDatabase, client: Client, d
   }
 
   // Crash or update with no pre-posted message — post fresh
+  const freshEmbed = signal.reason === "update"
+    ? new EmbedBuilder()
+        .setColor(colors.voidPurple)
+        .setTitle("✅ Steward Back Online")
+        .setDescription(`Restarted for an update.${offlineStr ? ` Down for **${offlineStr}**.` : ""}${signal.updateNotes ? `\n\n**Changes:**\n${formatChangelog(signal.updateNotes)}` : ""}`)
+        .setTimestamp()
+    : new EmbedBuilder()
+        .setColor(0xe74c3c)
+        .setTitle("⚠️ Steward Restarted After Crash")
+        .setDescription(
+          `${exitTimestamp ? `Crash detected at ${exitTimestamp}.\n` : ""}${offlineStr ? `Was offline for **${offlineStr}**.\n` : ""}Steward is back online.`
+        )
+        .setTimestamp();
+
   for (const guild of client.guilds.cache.values()) {
     const channelId = db.getGuildConfig(guild.id).shoutsChannelId;
     if (!channelId) continue;
-    const channel = guild.channels.cache.get(channelId);
-    if (!channel?.isTextBased()) continue;
-
-    const embed = signal.reason === "update"
-      ? new EmbedBuilder()
-          .setColor(colors.voidPurple)
-          .setTitle("✅ Steward Back Online")
-          .setDescription(`Restarted for an update.${offlineStr ? ` Down for **${offlineStr}**.` : ""}${signal.updateNotes ? `\n\n**Changes:**\n${formatChangelog(signal.updateNotes)}` : ""}`)
-          .setTimestamp()
-      : new EmbedBuilder()
-          .setColor(0xe74c3c)
-          .setTitle("⚠️ Steward Restarted After Crash")
-          .setDescription(
-            `${exitTimestamp ? `Crash detected at ${exitTimestamp}.\n` : ""}${offlineStr ? `Was offline for **${offlineStr}**.\n` : ""}Steward is back online.`
-          )
-          .setTimestamp();
-
-    await channel.send({ embeds: [embed] }).catch(() => null);
+    // Fetch the channel — don't rely on cache (may be empty at startup)
+    let channel: TextChannel | NewsChannel | ThreadChannel | null = null;
+    try {
+      const ch = await guild.channels.fetch(channelId);
+      if (ch?.isTextBased() && "send" in ch) channel = ch as TextChannel | NewsChannel | ThreadChannel;
+    } catch {
+      continue;
+    }
+    if (!channel) continue;
+    await channel.send({ embeds: [freshEmbed] }).catch(() => null);
   }
 }

@@ -64,6 +64,7 @@ import { normalizeTicketType, processOverdueTickets } from "../services/tickets.
 import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
 import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, readProfileStoreEntry, sendDataEdit, setNestedValue, unbanRobloxPlayer, writeProfileStoreEntry } from "../services/roblox.js";
+import { handleDataCommand } from "../services/playerData.js";
 import { buildLoaApprovalButtons, buildLoaRequestEmbed } from "../services/loa.js";
 import { buildSetupPanel } from "../services/setupPanel.js";
 import { postGoingDown } from "../services/startupAnnouncement.js";
@@ -244,6 +245,9 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         break;
       case "edit":
         await handleEdit(interaction, context, member);
+        break;
+      case "data":
+        await handleData(interaction, context, member);
         break;
       case "loa":
         await handleLoa(interaction, context, member);
@@ -1136,10 +1140,17 @@ async function handleEdit(interaction: ChatInputCommandInteraction, { db }: Comm
       );
       return;
     }
-    // DataStore permission missing or API error
+    // DataStore permission missing or API error — show full diagnostic
+    const status   = readResult.httpStatus ?? "?";
+    const body     = readResult.rawBody ?? readResult.error;
+    const universe = readResult.universeId ?? game.universeId;
     await interaction.editReply(
-      `❌ Could not read player data: ${readResult.error}\n` +
-      `-# Make sure the API key has **Universe Datastore Objects → Read** and **Universe Datastore Objects → Update** permissions in the Roblox Creator Hub, with your universe added under each permission.`
+      `❌ DataStore read failed (**HTTP ${status}**)\n` +
+      `\`\`\`${body.slice(0, 300)}\`\`\`` +
+      `**Check in Roblox Creator Hub → API Keys:**\n` +
+      `1. Under **Data Store**, tick both **"Read Entries"** and **"Update Entries"**.\n` +
+      `2. Under each of those, add universe \`${universe}\` — the permission type alone isn't enough.\n` +
+      `-# Full response is in the bot console log.`
     );
     return;
   }
@@ -1216,6 +1227,14 @@ async function handleEdit(interaction: ChatInputCommandInteraction, { db }: Comm
   );
 }
 
+async function handleData(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
+  if (!canUseAccess(db, member, "community")) throw new Error(commandDeniedMessage("community"));
+  const guild      = interaction.guild!;
+  const gameOption = interaction.options.getString("game");
+  const game       = resolveRobloxGame(db, guild.id, gameOption);
+  await handleDataCommand(interaction, db, game);
+}
+
 async function handleRoblox(interaction: ChatInputCommandInteraction, { db }: CommandContext, member: GuildMember) {
   if (!canUseAccess(db, member, "head")) throw new Error(commandDeniedMessage("head"));
   await interaction.reply({ ...buildRobloxPanel(db, interaction.guild!.id), ephemeral: true });
@@ -1254,13 +1273,17 @@ function buildRobloxPanel(db: AppDatabase, guildId: string): { embeds: EmbedBuil
     )
   );
 
-  // Per-game Remove / Set Default buttons (one row per game, max 5 games)
+  // Per-game Remove / Set Default / Update Key buttons (one row per game, max 4 games)
   for (const game of games.slice(0, 4)) {
     const btns = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`roblox:remove:${game.id}`)
         .setLabel(`🗑️ Remove ${game.name}`)
         .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId(`roblox:updatekey:${game.id}`)
+        .setLabel(`🔑 Update Key: ${game.name}`)
+        .setStyle(ButtonStyle.Secondary),
       ...(games.length > 1
         ? [new ButtonBuilder()
             .setCustomId(`roblox:setdefault:${game.id}`)
@@ -1308,10 +1331,10 @@ export async function handleRobloxButton(db: AppDatabase, interaction: ButtonInt
           new TextInputBuilder()
             .setCustomId("api_key")
             .setLabel("API Key")
-            .setPlaceholder("rblx_xxxx... — from create.roblox.com/settings/credentials")
-            .setStyle(TextInputStyle.Short)
+            .setPlaceholder("from create.roblox.com/settings/credentials")
+            .setStyle(TextInputStyle.Paragraph)
             .setRequired(true)
-            .setMaxLength(200)
+            .setMaxLength(1000)
         ),
         new ActionRowBuilder<TextInputBuilder>().addComponents(
           new TextInputBuilder()
@@ -1355,14 +1378,102 @@ export async function handleRobloxButton(db: AppDatabase, interaction: ButtonInt
     return true;
   }
 
+  if (action === "updatekey") {
+    const gameId = parseInt(parts[2], 10);
+    const games = db.listRobloxGames(interaction.guild.id);
+    const game = games.find((g) => g.id === gameId);
+    if (!game) {
+      await interaction.reply({ content: "Game not found.", ephemeral: true });
+      return true;
+    }
+    const modal = new ModalBuilder()
+      .setCustomId(`roblox:updatekey_modal:${game.id}`)
+      .setTitle(`Update API Key — ${game.name}`)
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("api_key")
+            .setLabel("New API Key")
+            .setPlaceholder("Paste the full key from create.roblox.com/credentials")
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+            .setMaxLength(1000)
+        )
+      );
+    await interaction.showModal(modal);
+    return true;
+  }
+
   return false;
 }
 
 // ── Roblox modal handler (exported — wired in index.ts) ──────────────────────
 
 export async function handleRobloxModal(db: AppDatabase, interaction: import("discord.js").ModalSubmitInteraction): Promise<boolean> {
-  if (interaction.customId !== "roblox:add_modal") return false;
   if (!interaction.guild) return false;
+
+  // ── Update Key modal ──────────────────────────────────────────────────────
+  if (interaction.customId.startsWith("roblox:updatekey_modal:")) {
+    const member = interaction.member as GuildMember;
+    if (!canUseAccess(db, member, "head")) {
+      await interaction.reply({ content: "You don't have permission to manage Roblox games.", ephemeral: true });
+      return true;
+    }
+
+    const gameId = parseInt(interaction.customId.split(":")[2], 10);
+    const games = db.listRobloxGames(interaction.guild.id);
+    const game = games.find((g) => g.id === gameId);
+    if (!game) {
+      await interaction.reply({ content: "Game not found — it may have been removed.", ephemeral: true });
+      return true;
+    }
+
+    const apiKey = interaction.fields.getTextInputValue("api_key").trim();
+    if (!apiKey) {
+      await interaction.reply({ content: "❌ API key cannot be empty.", ephemeral: true });
+      return true;
+    }
+
+    // Validate the new key before saving
+    let keyWarning = "";
+    try {
+      const testUrl = `https://apis.roblox.com/datastores/v1/universes/${game.universeId}/standard-datastores/datastore/entries/entry?datastoreName=test_validation&entryKey=0`;
+      const testRes = await fetch(testUrl, {
+        headers: { "x-api-key": apiKey },
+        signal: AbortSignal.timeout(8_000)
+      });
+      if (testRes.status === 401) {
+        keyWarning =
+          "\n\n⚠️ **API key validation failed (401 Unauthorized)** — Roblox does not recognise this key.\n" +
+          "Key was saved anyway. Double-check you copied the full key from Creator Hub → API Credentials.";
+      } else if (testRes.status === 403) {
+        keyWarning =
+          "\n\n⚠️ **API key permissions issue (403 Forbidden)** — key is valid but lacks DataStore access.\n" +
+          "In Creator Hub → API Credentials, under **Data Store**, add **Read Entries** and **Update Entries** " +
+          `and make sure universe \`${game.universeId}\` is listed under each permission.`;
+      }
+      // 404 = key is valid and recognised
+    } catch {
+      // Network timeout — skip validation
+    }
+
+    db.upsertRobloxGame(interaction.guild.id, game.universeId, apiKey, game.name);
+    await writeAuditAndPost(db, interaction.guild, interaction.user.id, "roblox.game.key_updated", { name: game.name });
+
+    await interaction.deferUpdate().catch(() => null);
+    if (keyWarning) {
+      await interaction.followUp({ content: `✅ API key updated for **${game.name}**.${keyWarning}`, ephemeral: true }).catch(() => null);
+    } else {
+      await interaction.followUp({ content: `✅ API key updated for **${game.name}**. Validation passed (404 = key accepted).`, ephemeral: true }).catch(() => null);
+    }
+    const guildId2 = interaction.guild!.id;
+    await interaction.editReply(buildRobloxPanel(db, guildId2)).catch(async () => {
+      await interaction.followUp({ ...buildRobloxPanel(db, guildId2), ephemeral: true }).catch(() => null);
+    });
+    return true;
+  }
+
+  if (interaction.customId !== "roblox:add_modal") return false;
 
   const member = interaction.member as GuildMember;
   if (!canUseAccess(db, member, "head")) {
@@ -1379,12 +1490,40 @@ export async function handleRobloxModal(db: AppDatabase, interaction: import("di
     return true;
   }
 
+  // ── Validate the API key before saving ──────────────────────────────────
+  // Use a throwaway GET to a non-existent entry: 404 = key works, 401 = bad key, 403 = wrong perms
+  let keyWarning = "";
+  try {
+    const testUrl = `https://apis.roblox.com/datastores/v1/universes/${universeId}/standard-datastores/datastore/entries/entry?datastoreName=test_validation&entryKey=0`;
+    const testRes = await fetch(testUrl, {
+      headers: { "x-api-key": apiKey },
+      signal: AbortSignal.timeout(8_000)
+    });
+    if (testRes.status === 401) {
+      keyWarning =
+        "\n\n⚠️ **API key validation failed (401 Unauthorized)** — Roblox does not recognise this key.\n" +
+        "The game was saved anyway, but API calls will fail until the key is corrected.\n" +
+        "Go to [Creator Hub → API Credentials](https://create.roblox.com/credentials), copy the full key again, and use ➕ Add Game to overwrite it.";
+    } else if (testRes.status === 403) {
+      keyWarning =
+        "\n\n⚠️ **API key permissions issue (403 Forbidden)** — the key is recognised but lacks DataStore access.\n" +
+        "In Creator Hub → API Credentials, under **Data Store**, add **Read Entries** and **Update Entries**, " +
+        "and make sure universe `" + universeId + "` is listed under each permission.";
+    }
+    // 404 = key is valid, entry just doesn't exist — that's the expected success case
+  } catch {
+    // Network timeout or error — skip validation, don't block saving
+  }
+
   db.upsertRobloxGame(interaction.guild.id, universeId, apiKey, name);
   await writeAuditAndPost(db, interaction.guild, interaction.user.id, "roblox.game.added", { universeId, name });
 
   // Refresh the panel if the original message is still there
   const guildId = interaction.guild!.id;
   await interaction.deferUpdate().catch(() => null);
+  if (keyWarning) {
+    await interaction.followUp({ content: keyWarning, ephemeral: true }).catch(() => null);
+  }
   await interaction.editReply(buildRobloxPanel(db, guildId)).catch(async () => {
     await interaction.followUp({ ...buildRobloxPanel(db, guildId), ephemeral: true }).catch(() => null);
   });

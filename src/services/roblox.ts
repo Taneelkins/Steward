@@ -12,8 +12,9 @@
  *   https://create.roblox.com/dashboard/creations/experiences/{universeId}/overview
  */
 
-const ROBLOX_USERS_API = "https://users.roblox.com";
-const ROBLOX_CLOUD_API = "https://apis.roblox.com/cloud/v2";
+const ROBLOX_USERS_API    = "https://users.roblox.com";
+const ROBLOX_CLOUD_API    = "https://apis.roblox.com/cloud/v2";
+const ROBLOX_DATASTORE_V1 = "https://apis.roblox.com/datastores/v1";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -210,16 +211,17 @@ export async function sendDataEdit(
 
 export type DataStoreResult<T = unknown> =
   | { success: true; data: T }
-  | { success: false; error: string; notFound?: boolean };
+  | { success: false; error: string; notFound?: boolean; httpStatus?: number; rawBody?: string; universeId?: string; datastoreName?: string };
 
 /**
- * Read a ProfileStore entry directly from the DataStore via Open Cloud API.
+ * Read a ProfileStore entry directly from the DataStore via Open Cloud v1 API.
  *
  * Returns the full stored envelope:
  *   { Data: {...}, MetaData: { ActiveSession: [...] | null, ... }, GlobalUpdates: [...] }
  *
- * The API key must have the "DataStore" permission with Read access.
- * datastoreName must match the ProfileStore name used in the game (default: "Verdict01").
+ * Required API key permission (Roblox Creator Hub):
+ *   Data Store → Read Entries  (scope: universe-datastores.objects:read)
+ *   Add your specific universe under that permission.
  */
 export async function readProfileStoreEntry(options: {
   universeId: string;
@@ -228,7 +230,9 @@ export async function readProfileStoreEntry(options: {
   datastoreName?: string;
 }): Promise<DataStoreResult> {
   const { universeId, apiKey, userId, datastoreName = "Verdict01" } = options;
-  const url = `${ROBLOX_CLOUD_API}/universes/${universeId}/data-stores/${encodeURIComponent(datastoreName)}/entries/${encodeURIComponent(String(userId))}`;
+  const url =
+    `${ROBLOX_DATASTORE_V1}/universes/${universeId}/standard-datastores/datastore/entries/entry` +
+    `?datastoreName=${encodeURIComponent(datastoreName)}&entryKey=${encodeURIComponent(String(userId))}`;
   try {
     const res = await fetch(url, {
       headers: { "x-api-key": apiKey },
@@ -239,23 +243,32 @@ export async function readProfileStoreEntry(options: {
     }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      return { success: false, error: `DataStore read failed: HTTP ${res.status}${text ? ` — ${text.slice(0, 200)}` : ""}` };
+      console.warn(`[roblox] DataStore read failed: HTTP ${res.status} | universe=${universeId} | store=${datastoreName} | userId=${userId} | body=${text.slice(0, 400)}`);
+      return {
+        success: false,
+        error: `HTTP ${res.status}`,
+        httpStatus: res.status,
+        rawBody: text.slice(0, 400),
+        universeId,
+        datastoreName
+      };
     }
-    // v2 response: { path, createTime, revisionId, state, value: <actual data>, id, etag }
-    const envelope = await res.json();
-    return { success: true, data: envelope.value ?? envelope };
+    // v1 response body IS the stored value directly (no wrapper object)
+    const data = await res.json();
+    return { success: true, data };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : "Network error reading DataStore" };
   }
 }
 
 /**
- * Write a ProfileStore entry back to the DataStore via Open Cloud API.
- * Pass the full envelope object returned by readProfileStoreEntry — we only
- * modify the nested value, the rest of the envelope (MetaData, GlobalUpdates, etc.)
- * is preserved exactly so ProfileStore's session locking is not disturbed.
+ * Write a ProfileStore entry back to the DataStore via Open Cloud v1 API.
+ * Pass the full envelope object returned by readProfileStoreEntry — MetaData and
+ * GlobalUpdates are preserved exactly so ProfileStore session locking is not disturbed.
  *
- * The API key must have the "DataStore" permission with Write access.
+ * Required API key permission (Roblox Creator Hub):
+ *   Data Store → Update Entries  (scope: universe-datastores.objects:update)
+ *   Add your specific universe under that permission.
  */
 export async function writeProfileStoreEntry(options: {
   universeId: string;
@@ -265,12 +278,14 @@ export async function writeProfileStoreEntry(options: {
   datastoreName?: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
   const { universeId, apiKey, userId, entry, datastoreName = "Verdict01" } = options;
-  const url = `${ROBLOX_CLOUD_API}/universes/${universeId}/data-stores/${encodeURIComponent(datastoreName)}/entries/${encodeURIComponent(String(userId))}`;
-  // v2 PATCH body wraps the value: { "value": <data> }
-  const body = JSON.stringify({ value: entry });
+  const url =
+    `${ROBLOX_DATASTORE_V1}/universes/${universeId}/standard-datastores/datastore/entries/entry` +
+    `?datastoreName=${encodeURIComponent(datastoreName)}&entryKey=${encodeURIComponent(String(userId))}`;
+  // v1 POST body is the value directly (no wrapper)
+  const body = JSON.stringify(entry);
   try {
     const res = await fetch(url, {
-      method: "PATCH",
+      method: "POST",
       headers: {
         "x-api-key": apiKey,
         "content-type": "application/json"
@@ -280,6 +295,7 @@ export async function writeProfileStoreEntry(options: {
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      console.warn(`[roblox] DataStore write failed: HTTP ${res.status} | universe=${universeId} | store=${datastoreName} | userId=${userId} | body=${text.slice(0, 200)}`);
       return { success: false, error: `DataStore write failed: HTTP ${res.status}${text ? ` — ${text.slice(0, 200)}` : ""}` };
     }
     return { success: true };

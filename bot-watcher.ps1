@@ -83,9 +83,9 @@ while ($true) {
             # Preserve pre-written signal — just stamp the exit time
             $existing | Add-Member -Force -NotePropertyName "exitTime" -NotePropertyValue $exitTime
             $existing | Add-Member -Force -NotePropertyName "reason" -NotePropertyValue "update"
-            $existing | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding utf8 -Force
+            $existing | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding ascii -Force
         } else {
-            @{ reason = "update"; exitTime = $exitTime } | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding utf8 -Force
+            @{ reason = "update"; exitTime = $exitTime } | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding ascii -Force
         }
     } else {
         Log "Crash or unexpected exit. Restarting in 3s..."
@@ -100,9 +100,9 @@ while ($true) {
         if ($existing -and $existing.updateNotes) {
             $existing | Add-Member -Force -NotePropertyName "exitTime" -NotePropertyValue $exitTime
             $existing | Add-Member -Force -NotePropertyName "reason" -NotePropertyValue "update"
-            $existing | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding utf8 -Force
+            $existing | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding ascii -Force
         } else {
-            @{ reason = "crash"; exitTime = $exitTime } | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding utf8 -Force
+            @{ reason = "crash"; exitTime = $exitTime } | ConvertTo-Json | Out-File -FilePath $signalFile -Encoding ascii -Force
         }
     }
 }

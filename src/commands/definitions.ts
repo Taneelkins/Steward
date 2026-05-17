@@ -106,6 +106,8 @@ export function buildCommands(options: CommandBuildOptions = {}) {
 
     editCommand(),
 
+    dataCommand(),
+
     loaCommand(),
 
     new SlashCommandBuilder()
@@ -749,6 +751,19 @@ function editCommand() {
     )
     .addStringOption((option) =>
       option.setName("value").setDescription("New value — numbers, true/false, or text.").setRequired(true)
+    )
+    .addStringOption((option) =>
+      option.setName("game").setDescription("Game name (only needed if multiple games are configured).")
+    )
+    .setDefaultMemberPermissions(communityDefault);
+}
+
+function dataCommand() {
+  return new SlashCommandBuilder()
+    .setName("data")
+    .setDescription("View and edit a player's full in-game data profile (Community Managers only).")
+    .addStringOption((option) =>
+      option.setName("roblox_user").setDescription("Roblox username of the player.").setRequired(true)
     )
     .addStringOption((option) =>
       option.setName("game").setDescription("Game name (only needed if multiple games are configured).")

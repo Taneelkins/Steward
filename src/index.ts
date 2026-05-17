@@ -16,6 +16,7 @@ import { handlePotentialTranscript } from "./services/tickets.js";
 import { handleLogButton, handleLogMediaMessage, handleLogModal, injectDraftFromDeniedCase, initDraftPersistence } from "./services/logWorkflow.js";
 import { handleHelpButton } from "./services/helpMenu.js";
 import { handleApprovalButton, handleExecutePunishment, handleFixPunishmentButton, handleFixPunishmentModal, handleJuniorReviewButton, handleJuniorReviewModal, handleTranscriptButton } from "./services/cases.js";
+import { handleDataButton, handleDataModal } from "./services/playerData.js";
 import { postStartupAnnouncement, saveShoutsChannels } from "./services/startupAnnouncement.js";
 
 const env = readEnv();
@@ -129,6 +130,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
     if (fixPunishHandled) return;
 
+    const dataHandled = await handleDataButton(db, interaction).catch(async (error) => {
+      const message = error instanceof Error ? error.message : "Something went wrong.";
+      if (interaction.replied || interaction.deferred) {
+        await interaction.editReply(`Error: ${message}`).catch(() => null);
+      } else {
+        await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+      }
+      return true;
+    });
+    if (dataHandled) return;
+
     const robloxHandled = await handleRobloxButton(db, interaction).catch(async (error) => {
       const message = error instanceof Error ? error.message : "Something went wrong.";
       if (interaction.replied || interaction.deferred) {
@@ -209,6 +221,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return true;
     });
     if (fixPunishModalHandled) return;
+
+    const dataModalHandled = await handleDataModal(db, interaction).catch(async (error) => {
+      const message = error instanceof Error ? error.message : "Something went wrong.";
+      if (interaction.replied || interaction.deferred) {
+        await interaction.editReply(`Error: ${message}`).catch(() => null);
+      } else {
+        await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+      }
+      return true;
+    });
+    if (dataModalHandled) return;
 
     const handled = await handleLogModal(db, interaction).catch(async (error) => {
       const message = error instanceof Error ? error.message : "Something went wrong.";
