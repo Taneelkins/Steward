@@ -110,50 +110,6 @@ export function buildCommands(options: CommandBuildOptions = {}) {
 
     loaCommand(),
 
-    // ── Secondary-server cross-server commands ─────────────────────────────
-    new SlashCommandBuilder()
-      .setName("jail")
-      .setDescription("Jail a user in this server and queue a Discord Mute log in the main server.")
-      .addUserOption((o) => o.setName("user").setDescription("User to jail.").setRequired(true))
-      .addStringOption((o) => o.setName("duration").setDescription("Duration, e.g. 7d, 24h, 30m. Omit for indefinite."))
-      .addStringOption((o) => o.setName("reason").setDescription("Reason for the action (pre-fills the log)."))
-      .setDefaultMemberPermissions(juniorDefault),
-
-    new SlashCommandBuilder()
-      .setName("unjail")
-      .setDescription("Unjail a user in this server and queue a Discord Mute appeal in the main server.")
-      .addUserOption((o) => o.setName("user").setDescription("User to unjail.").setRequired(true))
-      .addStringOption((o) => o.setName("reason").setDescription("Reason for the appeal (pre-fills the log)."))
-      .setDefaultMemberPermissions(normalDefault),
-
-    new SlashCommandBuilder()
-      .setName("ban")
-      .setDescription("Ban a user from this server and queue a Discord Ban log in the main server.")
-      .addUserOption((o) => o.setName("user").setDescription("User to ban.").setRequired(true))
-      .addStringOption((o) => o.setName("reason").setDescription("Reason for the ban (pre-fills the log)."))
-      .setDefaultMemberPermissions(normalDefault),
-
-    new SlashCommandBuilder()
-      .setName("unban")
-      .setDescription("Unban a user from this server and queue a ban appeal in the main server.")
-      .addStringOption((o) => o.setName("user_id").setDescription("Discord user ID to unban.").setRequired(true))
-      .addStringOption((o) => o.setName("reason").setDescription("Reason for the unban (pre-fills the log)."))
-      .setDefaultMemberPermissions(normalDefault),
-
-    new SlashCommandBuilder()
-      .setName("kick")
-      .setDescription("Kick a user from this server and queue a Discord Kick log in the main server.")
-      .addUserOption((o) => o.setName("user").setDescription("User to kick.").setRequired(true))
-      .addStringOption((o) => o.setName("reason").setDescription("Reason for the kick (pre-fills the log)."))
-      .setDefaultMemberPermissions(normalDefault),
-
-    new SlashCommandBuilder()
-      .setName("warn")
-      .setDescription("Warn a user in this server and queue a Discord Warn log in the main server.")
-      .addUserOption((o) => o.setName("user").setDescription("User to warn.").setRequired(true))
-      .addStringOption((o) => o.setName("reason").setDescription("Reason for the warning (pre-fills the log)."))
-      .setDefaultMemberPermissions(juniorDefault),
-
     new SlashCommandBuilder()
       .setName("lookup")
       .setDescription("Search all case logs by target identity.")
@@ -322,6 +278,50 @@ export function buildSecondaryCommands() {
       .addUserOption((o) => o.setName("member").setDescription("The staff member.").setRequired(true))
       .addStringOption((o) => o.setName("roblox_username").setDescription("Their exact Roblox username.").setRequired(true))
       .setDefaultMemberPermissions(headDefault),
+
+    // ── Cross-server action commands (secondary server only) ───────────────
+    new SlashCommandBuilder()
+      .setName("jail")
+      .setDescription("Jail a user and queue an incomplete Discord Mute log in the main server for you to finish.")
+      .addUserOption((o) => o.setName("user").setDescription("User to jail.").setRequired(true))
+      .addStringOption((o) => o.setName("duration").setDescription("Duration, e.g. 7d, 24h, 30m. Omit for indefinite."))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(juniorDefault),
+
+    new SlashCommandBuilder()
+      .setName("unjail")
+      .setDescription("Unjail a user and queue an incomplete mute appeal log in the main server for you to finish.")
+      .addUserOption((o) => o.setName("user").setDescription("User to unjail.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("ban")
+      .setDescription("Ban a user and queue an incomplete Discord Ban log in the main server for you to finish.")
+      .addUserOption((o) => o.setName("user").setDescription("User to ban.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("unban")
+      .setDescription("Unban a user and queue an incomplete ban appeal log in the main server for you to finish.")
+      .addStringOption((o) => o.setName("user_id").setDescription("Discord user ID to unban.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("kick")
+      .setDescription("Kick a user and queue an incomplete Discord Kick log in the main server for you to finish.")
+      .addUserOption((o) => o.setName("user").setDescription("User to kick.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("warn")
+      .setDescription("Warn a user and queue an incomplete Discord Warn log in the main server for you to finish.")
+      .addUserOption((o) => o.setName("user").setDescription("User to warn.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(juniorDefault),
   ];
 
   return commands.map((c) => c.toJSON());
