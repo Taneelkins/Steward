@@ -2543,24 +2543,69 @@ async function handleSetupSecondary(
   if (subcommand === "roles") {
     await interaction.deferReply({ ephemeral: true });
 
+    await guild.roles.fetch();
+
+    // Alternate name aliases to try when searching by name
+    const TIER_NAME_ALIASES: Record<StaffRoleKey, string[]> = {
+      staff:            ["staff"],
+      juniorMod:        ["junior mod", "junior moderator", "jr mod", "jr moderator", "junior"],
+      mod:              ["mod", "moderator", "normal mod", "normal moderator"],
+      seniorMod:        ["senior mod", "senior moderator", "sr mod", "sr moderator", "senior"],
+      headMod:          ["head mod", "head moderator", "hmod", "head"],
+      communityManager: ["community manager", "cm", "community mod", "community moderator"],
+    };
+
     const tierOptions: Array<{ key: StaffRoleKey; option: string }> = [
-      { key: "juniorMod", option: "junior_mod" },
-      { key: "mod", option: "mod" },
-      { key: "seniorMod", option: "senior_mod" },
-      { key: "headMod", option: "head_mod" },
+      { key: "juniorMod",        option: "junior_mod" },
+      { key: "mod",              option: "mod" },
+      { key: "seniorMod",        option: "senior_mod" },
+      { key: "headMod",          option: "head_mod" },
       { key: "communityManager", option: "community_manager" },
     ];
 
-    const updates = tierOptions
-      .map(({ key, option }) => ({ key, role: interaction.options.getRole(option) as Role | null }))
-      .filter((u): u is { key: StaffRoleKey; role: Role } => u.role !== null);
+    // Already-saved roles from DB so we can fall back to them
+    const existingStaffRoles = db.listStaffRoles(guild.id);
 
-    if (updates.length === 0) {
-      await interaction.editReply("No roles provided. Pass at least one role option to configure tier roles.");
+    type TierResult = { key: StaffRoleKey; role: Role; source: "explicit" | "name-match" | "saved" };
+    const results: TierResult[] = [];
+    const notFound: StaffRoleKey[] = [];
+
+    for (const { key, option } of tierOptions) {
+      const explicit = interaction.options.getRole(option) as Role | null;
+      if (explicit) {
+        results.push({ key, role: explicit, source: "explicit" });
+        continue;
+      }
+
+      // Try name-matching against the guild's roles
+      const aliases = TIER_NAME_ALIASES[key];
+      const byName = guild.roles.cache.find(
+        (r) => !r.managed && aliases.some((alias) => r.name.toLowerCase() === alias)
+      ) ?? null;
+      if (byName) {
+        results.push({ key, role: byName, source: "name-match" });
+        continue;
+      }
+
+      // Fall back to already-saved DB entry for this key
+      const saved = existingStaffRoles.find((r) => r.key === key);
+      const savedRole = saved ? guild.roles.cache.get(saved.roleId) ?? null : null;
+      if (savedRole) {
+        results.push({ key, role: savedRole, source: "saved" });
+        continue;
+      }
+
+      notFound.push(key);
+    }
+
+    if (results.length === 0) {
+      await interaction.editReply(
+        "❌ No roles found. Either pass roles explicitly (e.g. `junior_mod:@Junior Mod`) or make sure the server has roles whose names match the tier names (e.g. \"Junior Mod\", \"Mod\", \"Senior Mod\", \"Head Mod\", \"Community Manager\")."
+      );
       return;
     }
 
-    for (const { key, role } of updates) {
+    for (const { key, role } of results) {
       upsertStaffRole(db, guild.id, key, role);
     }
 
@@ -2569,11 +2614,17 @@ async function handleSetupSecondary(
     deployCommandsForGuild(context.env.discordToken, context.env.discordClientId, guild.id, { isSecondary: true })
       .catch((err) => console.error("[setupsecondary] Failed to redeploy secondary commands:", err));
 
-    const lines = updates.map(({ key, role }) => `• **${TIER_DISPLAY[key]}** → ${role.name} (\`${role.id}\`)`);
+    const sourceLabel = { explicit: "✅ set", "name-match": "🔍 auto-detected", saved: "💾 kept from DB" };
+    const lines = results.map(({ key, role, source }) =>
+      `• **${TIER_DISPLAY[key]}** → ${role.name} (\`${role.id}\`) — ${sourceLabel[source]}`
+    );
+    const missingLines = notFound.length > 0
+      ? `\n\n⚠️ Not found (set manually with role options): ${notFound.map((k) => `**${TIER_DISPLAY[k]}**`).join(", ")}`
+      : "";
+
     await interaction.editReply(
-      `✅ Staff tier roles updated:\n${lines.join("\n")}\n\n` +
-      `This server is now marked as a **secondary server** — only staff-management commands are visible here.\n` +
-      `Use \`/setupsecondary list\` to see all configured roles.`
+      `**Staff tier roles configured:**\n${lines.join("\n")}${missingLines}\n\n` +
+      `This server is now marked as a **secondary server** — only staff-management commands are visible here.`
     );
     return;
   }
