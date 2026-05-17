@@ -164,6 +164,9 @@ export function buildCommands(options: CommandBuildOptions = {}) {
       .addUserOption((option) =>
         option.setName("member").setDescription("The staff member to demote.").setRequired(true)
       )
+      .addStringOption((option) =>
+        option.setName("reason").setDescription("Reason for the demotion (sent to the member via DM).")
+      )
       .setDefaultMemberPermissions(headDefault),
 
     new SlashCommandBuilder()
@@ -258,6 +261,7 @@ export function buildSecondaryCommands() {
       .setName("demote")
       .setDescription("Demote a staff member down one tier in all linked servers.")
       .addUserOption((o) => o.setName("member").setDescription("The staff member to demote.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason for the demotion (sent to the member via DM)."))
       .setDefaultMemberPermissions(headDefault),
 
     new SlashCommandBuilder()

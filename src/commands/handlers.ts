@@ -2355,6 +2355,7 @@ async function handlePromoteOrDemote(
     return;
   }
   const targetUser = interaction.options.getUser("member", true);
+  const reason = direction === "demote" ? (interaction.options.getString("reason") ?? null) : null;
   const targetMember = await guild.members.fetch(targetUser.id).catch(() => null) as GuildMember | null;
 
   if (!targetMember) {
@@ -2399,12 +2400,12 @@ async function handlePromoteOrDemote(
 
   const newKey = TIER_LADDER[newIdx];
   const verb = direction === "promote" ? "Promoted" : "Demoted";
-  const reason = `${verb} by ${actor.user.tag} (${actor.id}) via /${direction}`;
+  const auditReason = `${verb} by ${actor.user.tag} (${actor.id}) via /${direction}${reason ? `: ${reason}` : ""}`;
 
   await interaction.deferReply();
 
   // Apply in primary guild
-  const mainResult = await applyTierChange(guild, targetMember.id, currentKey, newKey, staffRoles, reason);
+  const mainResult = await applyTierChange(guild, targetMember.id, currentKey, newKey, staffRoles, auditReason);
 
   // Apply in linked guild if configured
   let linkedInfo = "";
@@ -2414,7 +2415,7 @@ async function handlePromoteOrDemote(
       ?? await interaction.client.guilds.fetch(config.linkedGuildId).catch(() => null);
     if (linkedGuild) {
       const linkedStaffRoles = db.listStaffRoles(linkedGuild.id);
-      const linkedResult = await applyTierChange(linkedGuild, targetMember.id, currentKey, newKey, linkedStaffRoles, reason);
+      const linkedResult = await applyTierChange(linkedGuild, targetMember.id, currentKey, newKey, linkedStaffRoles, auditReason);
       linkedInfo = linkedResult === "ok"
         ? `\n✅ Also applied in **${linkedGuild.name}**.`
         : linkedResult === "no_member"
@@ -2427,11 +2428,24 @@ async function handlePromoteOrDemote(
 
   const fromLabel = TIER_DISPLAY[currentKey];
   const toLabel = TIER_DISPLAY[newKey];
-  const arrow = direction === "promote" ? "→" : "→";
 
   if (mainResult === "ok") {
+    // DM the member if this is a demotion
+    if (direction === "demote") {
+      const dmLines = [
+        `**You have been demoted in ${guild.name}.**`,
+        ``,
+        `**Previous rank:** ${fromLabel}`,
+        `**New rank:** ${toLabel}`,
+        reason ? `**Reason:** ${reason}` : null,
+        ``,
+        `This action was taken by the moderation team. If you have questions, please reach out to a senior staff member.`
+      ].filter(Boolean).join("\n");
+      await targetUser.send(dmLines).catch(() => null);
+    }
+
     await interaction.editReply({
-      content: `${direction === "promote" ? "⬆️" : "⬇️"} **${verb}** <@${targetUser.id}>\n${fromLabel} ${arrow} **${toLabel}**${linkedInfo}`
+      content: `${direction === "promote" ? "⬆️" : "⬇️"} **${verb}** <@${targetUser.id}>\n${fromLabel} → **${toLabel}**${linkedInfo}`
     });
   } else if (mainResult === "role_missing") {
     await interaction.editReply({
@@ -2517,6 +2531,16 @@ async function handleFire(
       linkedInfo = "\n⚠️ Could not fetch the linked server.";
     }
   }
+
+  // DM the fired member
+  const dmLines = [
+    `**You have been removed from the staff team in ${guild.name}.**`,
+    ``,
+    `**Reason:** ${reason}`,
+    ``,
+    `All staff roles have been removed. If you believe this was a mistake, please contact a senior staff member.`
+  ].join("\n");
+  await targetUser.send(dmLines).catch(() => null);
 
   const mainLine = mainMissing
     ? "Member is not in this server."
