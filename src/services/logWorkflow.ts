@@ -454,6 +454,7 @@ export async function startPrefilledLogFromButton(
     discordId?: string | null;
     discordUsername?: string | null;
     punishmentLength?: string | null;
+    reason?: string | null;
   }
 ): Promise<void> {
   const guild = interaction.guild!;
@@ -481,7 +482,7 @@ export async function startPrefilledLogFromButton(
       robloxId: null,
       discordId: prefill.discordId ?? null
     },
-    reason: null,
+    reason: prefill.reason ?? null,
     evidence: null,
     notes: null,
     noAction: false,

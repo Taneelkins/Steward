@@ -65,7 +65,7 @@ import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
 import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, readProfileStoreEntry, sendDataEdit, setNestedValue, unbanRobloxPlayer, writeProfileStoreEntry } from "../services/roblox.js";
 import { handleDataCommand } from "../services/playerData.js";
-import { handleCrossJail, handleCrossUnjail, handleCrossBan, handleCrossUnban, handleCrossKick, handleCrossServerButton } from "../services/crossServer.js";
+import { handleCrossJail, handleCrossUnjail, handleCrossBan, handleCrossUnban, handleCrossKick, handleCrossWarn, handleCrossServerButton } from "../services/crossServer.js";
 import { buildLoaApprovalButtons, buildLoaRequestEmbed } from "../services/loa.js";
 import { buildSetupPanel } from "../services/setupPanel.js";
 import { postGoingDown } from "../services/startupAnnouncement.js";
@@ -87,6 +87,7 @@ const SECONDARY_ALLOWED_COMMANDS = new Set([
   "ban",
   "unban",
   "kick",
+  "warn",
 ]);
 
 export async function handleChatInputCommand(interaction: ChatInputCommandInteraction, context: CommandContext) {
@@ -284,6 +285,9 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         break;
       case "kick":
         await handleCrossKick(interaction, context.db);
+        break;
+      case "warn":
+        await handleCrossWarn(interaction, context.db);
         break;
       default:
         await interaction.reply({ content: "Unknown command.", ephemeral: true });

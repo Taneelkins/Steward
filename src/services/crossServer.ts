@@ -1,18 +1,20 @@
 /**
  * Cross-server punishment commands.
  *
- * Secondary-server staff run /jail /unjail /ban /unban /kick.
+ * Secondary-server staff run /jail /unjail /ban /unban /kick /warn.
  * The bot:
  *   1. Performs the Discord action (role assign, ban, kick, etc.)
- *   2. Pings the target in the secondary server's crossserverCommsChannel
- *   3. Posts a "pending log" embed in the main server's log channel
- *      with a "✏️ Fill in Details" button so any main-server staff
- *      can open the interactive log workflow pre-filled with the target's info.
+ *   2. Pings the TARGET in the secondary server's crossserverCommsChannel
+ *      (so they know what happened)
+ *   3. Posts an INCOMPLETE log embed in the MAIN server's crossserverCommsChannel,
+ *      pinging the MODERATOR who ran the command, with a "✏️ Fill in Details" button
+ *      so they can finish the log and submit it to the correct log channel.
  *
- * Button custom-ID format:  cs:{subtype}:{discordId}:{duration}
+ * Button custom-ID format:  cs:{subtype}:{discordId}:{duration}:{reason}
  *   subtype:  mute | ban | kick | warn | mute-appeal | ban-appeal | kick-appeal
  *   discordId: 17-19 digit snowflake
  *   duration:  e.g. "7d" or "" for indefinite
+ *   reason:    truncated to 55 chars, colons in reason are safe (parse with slice(4).join(":"))
  */
 
 import {
@@ -34,28 +36,43 @@ import { colors } from "../utils/theme.js";
 
 // ── Action map ────────────────────────────────────────────────────────────────
 
-const ACTION_META: Record<string, { actionName: string; actionDisplayName: string; appealType?: string; isAppeal: boolean; color: number; emoji: string }> = {
-  mute:        { actionName: "discord", actionDisplayName: "Discord Mute",  isAppeal: false, color: colors.voidPurple,  emoji: "🔇" },
-  ban:         { actionName: "discord", actionDisplayName: "Discord Ban",   isAppeal: false, color: 0xe74c3c,           emoji: "🔨" },
-  kick:        { actionName: "discord", actionDisplayName: "Discord Kick",  isAppeal: false, color: 0xe67e22,           emoji: "👢" },
-  warn:        { actionName: "discord", actionDisplayName: "Discord Warn",  isAppeal: false, color: 0xf1c40f,           emoji: "⚠️" },
-  "mute-appeal": { actionName: "appeal", actionDisplayName: "Appeal",       appealType: "mute", isAppeal: true, color: 0x2ecc71, emoji: "📋" },
-  "ban-appeal":  { actionName: "appeal", actionDisplayName: "Appeal",       appealType: "ban",  isAppeal: true, color: 0x2ecc71, emoji: "📋" },
-  "kick-appeal": { actionName: "appeal", actionDisplayName: "Appeal",       appealType: "kick", isAppeal: true, color: 0x2ecc71, emoji: "📋" },
+const ACTION_META: Record<string, {
+  actionName: string;
+  actionDisplayName: string;
+  appealType?: string;
+  isAppeal: boolean;
+  color: number;
+  emoji: string;
+}> = {
+  mute:          { actionName: "discord", actionDisplayName: "Discord Mute",  isAppeal: false, color: colors.voidPurple, emoji: "🔇" },
+  ban:           { actionName: "discord", actionDisplayName: "Discord Ban",   isAppeal: false, color: 0xe74c3c,          emoji: "🔨" },
+  kick:          { actionName: "discord", actionDisplayName: "Discord Kick",  isAppeal: false, color: 0xe67e22,          emoji: "👢" },
+  warn:          { actionName: "discord", actionDisplayName: "Discord Warn",  isAppeal: false, color: 0xf1c40f,          emoji: "⚠️" },
+  "mute-appeal": { actionName: "appeal",  actionDisplayName: "Appeal",        appealType: "mute", isAppeal: true, color: 0x2ecc71, emoji: "📋" },
+  "ban-appeal":  { actionName: "appeal",  actionDisplayName: "Appeal",        appealType: "ban",  isAppeal: true, color: 0x2ecc71, emoji: "📋" },
+  "kick-appeal": { actionName: "appeal",  actionDisplayName: "Appeal",        appealType: "kick", isAppeal: true, color: 0x2ecc71, emoji: "📋" },
 };
 
-// ── Button helpers ────────────────────────────────────────────────────────────
+// ── Button builder ─────────────────────────────────────────────────────────────
 
-function buildFillButton(subtype: string, discordId: string, duration: string): ActionRowBuilder<ButtonBuilder> {
+function buildFillButton(
+  subtype: string,
+  discordId: string,
+  duration: string,
+  reason: string
+): ActionRowBuilder<ButtonBuilder> {
+  // Truncate reason so the full customId stays well under Discord's 100-char limit.
+  // Format: cs:{subtype}:{discordId}:{duration}:{reason}
+  const safeReason = reason.slice(0, 55);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`cs:${subtype}:${discordId}:${duration}`)
+      .setCustomId(`cs:${subtype}:${discordId}:${duration}:${safeReason}`)
       .setLabel("✏️ Fill in Details")
       .setStyle(ButtonStyle.Primary)
   );
 }
 
-// ── Post pending log to main server ─────────────────────────────────────────
+// ── Post incomplete log to main server's crossserverCommsChannel ──────────────
 
 async function postPendingLog(
   client: Client,
@@ -65,6 +82,8 @@ async function postPendingLog(
   discordId: string,
   discordUsername: string,
   duration: string,
+  reason: string,
+  modId: string,
   secondaryGuildName: string
 ) {
   const mainGuildId = db.findMainGuildForSecondary(secondaryGuildId);
@@ -74,10 +93,10 @@ async function postPendingLog(
   const meta = ACTION_META[subtype];
   if (!meta) return;
 
-  // Pick the right channel: appeal log for appeals, discord log for actions
-  const channelId = meta.isAppeal
-    ? (mainConfig.appealLogChannelId ?? mainConfig.actionLogChannelId)
-    : (db.getActionLogChannelId(mainGuildId, "discord") ?? mainConfig.actionLogChannelId);
+  // Post to the main server's cross-server comms channel (not the log channel).
+  // The mod clicks "Fill in Details" to complete the log, which then submits
+  // to the correct log channel (discord mute log, appeal log, etc.).
+  const channelId = mainConfig.crossserverCommsChannelId;
   if (!channelId) return;
 
   const mainGuild = client.guilds.cache.get(mainGuildId);
@@ -93,28 +112,32 @@ async function postPendingLog(
   const durationText = duration ? ` for **${duration}**` : "";
   const embed = new EmbedBuilder()
     .setColor(meta.color)
-    .setTitle(`${meta.emoji} Pending ${meta.actionDisplayName} Log`)
+    .setTitle(`${meta.emoji} Incomplete ${meta.actionDisplayName} Log`)
     .setDescription(
-      `A **${meta.isAppeal ? "appeal" : meta.actionDisplayName.toLowerCase()}** was issued in **${secondaryGuildName}**.\n` +
-      `Click **Fill in Details** to complete the log.`
+      `<@${modId}>, you just performed a **${meta.actionDisplayName}** in **${secondaryGuildName}**.\n` +
+      `An incomplete log has been created for you — click **Fill in Details** to finish it and submit it to the log channel.`
     )
     .addFields(
       { name: "User", value: `<@${discordId}> (${discordUsername})`, inline: true },
-      { name: "Action", value: meta.actionDisplayName + (meta.appealType ? ` (${meta.appealType})` : ""), inline: true },
-      ...(duration ? [{ name: "Duration", value: duration, inline: true }] : [])
+      { name: "Action", value: meta.actionDisplayName + (meta.appealType ? ` (${meta.appealType} appeal)` : ""), inline: true },
+      ...(duration ? [{ name: "Duration", value: duration, inline: true }] : []),
+      ...(reason ? [{ name: "Reason", value: reason, inline: false }] : [])
     )
     .setTimestamp()
     .setFooter({ text: `From: ${secondaryGuildName}` });
 
-  await channel.send({ embeds: [embed], components: [buildFillButton(subtype, discordId, duration)] }).catch(() => null);
+  await channel.send({
+    embeds: [embed],
+    components: [buildFillButton(subtype, discordId, duration, reason)]
+  }).catch(() => null);
 }
 
-// ── Notify user in secondary server's crossservercomms ───────────────────────
+// ── Ping the TARGET in the secondary server's crossservercomms ────────────────
 
-async function notifyUserInComms(
+async function notifyTargetInComms(
   secondaryGuild: import("discord.js").Guild,
   db: AppDatabase,
-  discordId: string,
+  targetId: string,
   message: string
 ) {
   const channelId = db.getGuildConfig(secondaryGuild.id).crossserverCommsChannelId;
@@ -122,7 +145,7 @@ async function notifyUserInComms(
   try {
     const ch = await secondaryGuild.channels.fetch(channelId);
     if (ch?.isTextBased() && "send" in ch) {
-      await (ch as TextChannel).send(`<@${discordId}> ${message}`).catch(() => null);
+      await (ch as TextChannel).send(`<@${targetId}> ${message}`).catch(() => null);
     }
   } catch { /* non-fatal */ }
 }
@@ -149,6 +172,7 @@ export async function handleCrossJail(interaction: ChatInputCommandInteraction, 
   }
 
   const durationStr = interaction.options.getString("duration") ?? null;
+  const reason = interaction.options.getString("reason") ?? "";
   const durationSecs = durationStr ? parseRobloxDuration(durationStr) : undefined;
   if (durationStr && durationSecs === null) {
     await interaction.reply({ content: `❌ Could not parse duration: \`${durationStr}\`. Try "7d", "24h", "30m".`, ephemeral: true });
@@ -163,7 +187,6 @@ export async function handleCrossJail(interaction: ChatInputCommandInteraction, 
     .map(r => r.id);
 
   try {
-    // Remove all saved roles and add jailed role
     for (const roleId of savedRoleIds) {
       await target.roles.remove(roleId).catch(() => null);
     }
@@ -191,27 +214,29 @@ export async function handleCrossJail(interaction: ChatInputCommandInteraction, 
 
   const durationDisplay = safeDurationSecs !== undefined ? formatRobloxDuration(safeDurationSecs) : "indefinitely";
 
-  // Notify user in crossservercomms
-  await notifyUserInComms(guild, db, target.id,
-    `you have been **jailed** in **${guild.name}** ${safeDurationSecs !== undefined ? `for **${durationDisplay}**` : "indefinitely"}. ` +
+  // Ping the target in secondary crossservercomms
+  await notifyTargetInComms(guild, db, target.id,
+    `you have been **jailed** in **${guild.name}**${safeDurationSecs !== undefined ? ` for **${durationDisplay}**` : " indefinitely"}. ` +
     `Please wait for staff to review your case.`
   );
 
-  // Post pending mute log in main server
+  // Post incomplete mute log in main server's crossservercomms, pinging the mod
   await postPendingLog(
     interaction.client, db, guild.id, "mute",
     target.id, target.user.username,
     safeDurationSecs !== undefined ? durationDisplay : "",
+    reason,
+    interaction.user.id,
     guild.name
   );
 
   await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.jail", {
-    target: target.id, username: target.user.username, duration: durationDisplay
+    target: target.id, username: target.user.username, duration: durationDisplay, reason
   });
 
   await interaction.editReply(
-    `✅ **${target.user.username}** has been jailed${durationSecs !== undefined ? ` for **${durationDisplay}**` : " indefinitely"}.\n` +
-    `A pending mute log has been posted in the main server for staff to complete.`
+    `✅ **${target.user.username}** has been jailed${safeDurationSecs !== undefined ? ` for **${durationDisplay}**` : " indefinitely"}.\n` +
+    `An incomplete mute log has been posted in the main server for you to finish.`
   );
 }
 
@@ -232,9 +257,11 @@ export async function handleCrossUnjail(interaction: ChatInputCommandInteraction
     return;
   }
 
+  const reason = interaction.options.getString("reason") ?? "";
+
   await interaction.deferReply({ ephemeral: true });
 
-  // Get saved roles from DB, restore them, remove jailed role
+  // Restore saved roles and remove jailed role
   const jailRecord = db.getJailedMember(guild.id, target.id);
   const savedRoleIds: string[] = jailRecord ? JSON.parse(jailRecord.saved_role_ids_json) as string[] : [];
 
@@ -252,28 +279,31 @@ export async function handleCrossUnjail(interaction: ChatInputCommandInteraction
 
   db.deleteUnjailForTarget(guild.id, target.id);
 
-  // Notify user
-  await notifyUserInComms(guild, db, target.id,
+  // Ping target in secondary crossservercomms
+  await notifyTargetInComms(guild, db, target.id,
     `you have been **unjailed** in **${guild.name}**. Your roles have been restored.`
   );
 
-  // Post pending appeal log in main server
+  // Post incomplete appeal log in main server's crossservercomms, pinging the mod
   await postPendingLog(
     interaction.client, db, guild.id, "mute-appeal",
-    target.id, target.user.username, "", guild.name
+    target.id, target.user.username, "",
+    reason,
+    interaction.user.id,
+    guild.name
   );
 
   await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.unjail", {
-    target: target.id, username: target.user.username
+    target: target.id, username: target.user.username, reason
   });
 
   await interaction.editReply(
     `✅ **${target.user.username}** has been unjailed. Roles restored.\n` +
-    `A pending appeal log has been posted in the main server.`
+    `An incomplete appeal log has been posted in the main server for you to finish.`
   );
 }
 
-// ── /ban (secondary) ─────────────────────────────────────────────────────────
+// ── /ban ─────────────────────────────────────────────────────────────────────
 
 export async function handleCrossBan(interaction: ChatInputCommandInteraction, db: AppDatabase) {
   const guild = interaction.guild!;
@@ -283,36 +313,41 @@ export async function handleCrossBan(interaction: ChatInputCommandInteraction, d
     return;
   }
 
+  const reason = interaction.options.getString("reason") ?? "";
+
   await interaction.deferReply({ ephemeral: true });
 
   try {
-    await guild.bans.create(target.id, { reason: `Banned by ${interaction.user.username} via /ban` });
+    await guild.bans.create(target.id, { reason: `Banned by ${interaction.user.username} via /ban${reason ? `: ${reason}` : ""}` });
   } catch (err) {
     await interaction.editReply(`❌ Failed to ban: ${err instanceof Error ? err.message : "Unknown error"}`);
     return;
   }
 
-  // Try to notify user in comms before they're banned (they may already be gone)
-  await notifyUserInComms(guild, db, target.id,
-    `you have been **banned** from **${guild.name}**.`
+  // Try to notify target in comms before they're banned (they may already be gone)
+  await notifyTargetInComms(guild, db, target.id,
+    `you have been **banned** from **${guild.name}**${reason ? ` — reason: ${reason}` : ""}.`
   );
 
   await postPendingLog(
     interaction.client, db, guild.id, "ban",
-    target.id, target.username, "", guild.name
+    target.id, target.username, "",
+    reason,
+    interaction.user.id,
+    guild.name
   );
 
   await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.ban", {
-    target: target.id, username: target.username
+    target: target.id, username: target.username, reason
   });
 
   await interaction.editReply(
     `✅ **${target.username}** has been banned.\n` +
-    `A pending ban log has been posted in the main server.`
+    `An incomplete ban log has been posted in the main server for you to finish.`
   );
 }
 
-// ── /unban (secondary) ───────────────────────────────────────────────────────
+// ── /unban ───────────────────────────────────────────────────────────────────
 
 export async function handleCrossUnban(interaction: ChatInputCommandInteraction, db: AppDatabase) {
   const guild = interaction.guild!;
@@ -323,13 +358,15 @@ export async function handleCrossUnban(interaction: ChatInputCommandInteraction,
     return;
   }
 
+  const reason = interaction.options.getString("reason") ?? "";
+
   await interaction.deferReply({ ephemeral: true });
 
   let username = userId;
   try {
     const bannedUser = await guild.bans.fetch(userId);
     username = bannedUser.user.username;
-    await guild.bans.remove(userId, `Unbanned by ${interaction.user.username} via /unban`);
+    await guild.bans.remove(userId, `Unbanned by ${interaction.user.username} via /unban${reason ? `: ${reason}` : ""}`);
   } catch (err) {
     await interaction.editReply(`❌ Failed to unban: ${err instanceof Error ? err.message : "Unknown error"} (User may not be banned.)`);
     return;
@@ -337,20 +374,23 @@ export async function handleCrossUnban(interaction: ChatInputCommandInteraction,
 
   await postPendingLog(
     interaction.client, db, guild.id, "ban-appeal",
-    userId, username, "", guild.name
+    userId, username, "",
+    reason,
+    interaction.user.id,
+    guild.name
   );
 
   await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.unban", {
-    target: userId, username
+    target: userId, username, reason
   });
 
   await interaction.editReply(
     `✅ **${username}** has been unbanned.\n` +
-    `A pending ban appeal log has been posted in the main server.`
+    `An incomplete ban appeal log has been posted in the main server for you to finish.`
   );
 }
 
-// ── /kick (secondary) ────────────────────────────────────────────────────────
+// ── /kick ─────────────────────────────────────────────────────────────────────
 
 export async function handleCrossKick(interaction: ChatInputCommandInteraction, db: AppDatabase) {
   const guild = interaction.guild!;
@@ -360,15 +400,17 @@ export async function handleCrossKick(interaction: ChatInputCommandInteraction, 
     return;
   }
 
+  const reason = interaction.options.getString("reason") ?? "";
+
   await interaction.deferReply({ ephemeral: true });
 
   // Notify before kick so they still receive the ping
-  await notifyUserInComms(guild, db, target.id,
-    `you have been **kicked** from **${guild.name}**.`
+  await notifyTargetInComms(guild, db, target.id,
+    `you have been **kicked** from **${guild.name}**${reason ? ` — reason: ${reason}` : ""}.`
   );
 
   try {
-    await target.kick(`Kicked by ${interaction.user.username} via /kick`);
+    await target.kick(`Kicked by ${interaction.user.username} via /kick${reason ? `: ${reason}` : ""}`);
   } catch (err) {
     await interaction.editReply(`❌ Failed to kick: ${err instanceof Error ? err.message : "Unknown error"}`);
     return;
@@ -376,16 +418,61 @@ export async function handleCrossKick(interaction: ChatInputCommandInteraction, 
 
   await postPendingLog(
     interaction.client, db, guild.id, "kick",
-    target.id, target.user.username, "", guild.name
+    target.id, target.user.username, "",
+    reason,
+    interaction.user.id,
+    guild.name
   );
 
   await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.kick", {
-    target: target.id, username: target.user.username
+    target: target.id, username: target.user.username, reason
   });
 
   await interaction.editReply(
     `✅ **${target.user.username}** has been kicked.\n` +
-    `A pending kick log has been posted in the main server.`
+    `An incomplete kick log has been posted in the main server for you to finish.`
+  );
+}
+
+// ── /warn ─────────────────────────────────────────────────────────────────────
+
+export async function handleCrossWarn(interaction: ChatInputCommandInteraction, db: AppDatabase) {
+  const guild = interaction.guild!;
+  const target = interaction.options.getMember("user") as GuildMember | null;
+  if (!target) {
+    await interaction.reply({ content: "❌ User not found in this server.", ephemeral: true });
+    return;
+  }
+  if (target.id === interaction.user.id) {
+    await interaction.reply({ content: "❌ You cannot warn yourself.", ephemeral: true });
+    return;
+  }
+
+  const reason = interaction.options.getString("reason") ?? "";
+
+  await interaction.deferReply({ ephemeral: true });
+
+  // Notify target in secondary crossservercomms
+  await notifyTargetInComms(guild, db, target.id,
+    `you have received a **warning** in **${guild.name}**${reason ? ` — reason: ${reason}` : ""}. Please take note.`
+  );
+
+  // Post incomplete warn log in main server's crossservercomms, pinging the mod
+  await postPendingLog(
+    interaction.client, db, guild.id, "warn",
+    target.id, target.user.username, "",
+    reason,
+    interaction.user.id,
+    guild.name
+  );
+
+  await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.warn", {
+    target: target.id, username: target.user.username, reason
+  });
+
+  await interaction.editReply(
+    `✅ **${target.user.username}** has been warned${reason ? ` — reason: ${reason}` : ""}.\n` +
+    `An incomplete warn log has been posted in the main server for you to finish.`
   );
 }
 
@@ -395,12 +482,13 @@ export async function handleCrossServerButton(db: AppDatabase, interaction: Butt
   if (!interaction.customId.startsWith("cs:")) return false;
   if (!interaction.guild) return false;
 
+  // Format: cs:{subtype}:{discordId}:{duration}:{reason...}
   const parts = interaction.customId.split(":");
-  // format: cs:{subtype}:{discordId}:{duration}
-  // subtype itself may contain hyphens (e.g. mute-appeal) — parts[1] always subtype, parts[2] discordId, parts[3] duration
-  const subtype    = parts[1];
-  const discordId  = parts[2];
-  const duration   = parts[3] ?? "";
+  const subtype   = parts[1];
+  const discordId = parts[2];
+  const duration  = parts[3] ?? "";
+  // reason may contain colons, so join everything after index 4
+  const reason    = parts.slice(4).join(":") || null;
 
   const meta = ACTION_META[subtype];
   if (!meta || !discordId) return false;
@@ -418,7 +506,8 @@ export async function handleCrossServerButton(db: AppDatabase, interaction: Butt
     appealType: meta.appealType ?? null,
     discordId,
     discordUsername,
-    punishmentLength: duration || null
+    punishmentLength: duration || null,
+    reason
   });
 
   return true;

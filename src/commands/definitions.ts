@@ -116,30 +116,42 @@ export function buildCommands(options: CommandBuildOptions = {}) {
       .setDescription("Jail a user in this server and queue a Discord Mute log in the main server.")
       .addUserOption((o) => o.setName("user").setDescription("User to jail.").setRequired(true))
       .addStringOption((o) => o.setName("duration").setDescription("Duration, e.g. 7d, 24h, 30m. Omit for indefinite."))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason for the action (pre-fills the log)."))
       .setDefaultMemberPermissions(normalDefault),
 
     new SlashCommandBuilder()
       .setName("unjail")
       .setDescription("Unjail a user in this server and queue a Discord Mute appeal in the main server.")
       .addUserOption((o) => o.setName("user").setDescription("User to unjail.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason for the appeal (pre-fills the log)."))
       .setDefaultMemberPermissions(normalDefault),
 
     new SlashCommandBuilder()
       .setName("ban")
       .setDescription("Ban a user from this server and queue a Discord Ban log in the main server.")
       .addUserOption((o) => o.setName("user").setDescription("User to ban.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason for the ban (pre-fills the log)."))
       .setDefaultMemberPermissions(normalDefault),
 
     new SlashCommandBuilder()
       .setName("unban")
       .setDescription("Unban a user from this server and queue a ban appeal in the main server.")
       .addStringOption((o) => o.setName("user_id").setDescription("Discord user ID to unban.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason for the unban (pre-fills the log)."))
       .setDefaultMemberPermissions(normalDefault),
 
     new SlashCommandBuilder()
       .setName("kick")
       .setDescription("Kick a user from this server and queue a Discord Kick log in the main server.")
       .addUserOption((o) => o.setName("user").setDescription("User to kick.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason for the kick (pre-fills the log)."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("warn")
+      .setDescription("Warn a user in this server and queue a Discord Warn log in the main server.")
+      .addUserOption((o) => o.setName("user").setDescription("User to warn.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason for the warning (pre-fills the log)."))
       .setDefaultMemberPermissions(normalDefault),
 
     new SlashCommandBuilder()
