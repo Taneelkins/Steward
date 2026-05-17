@@ -2518,9 +2518,77 @@ async function handleSetupSecondary(
   context: CommandContext,
   _member: GuildMember
 ) {
-  await interaction.deferReply({ ephemeral: true });
+  const subcommand = interaction.options.getSubcommand(true);
   const { db } = context;
   const guild = interaction.guild!;
+
+  // ── /setupsecondary roles ─────────────────────────────────────────────────
+  if (subcommand === "roles") {
+    await interaction.deferReply({ ephemeral: true });
+
+    const tierOptions: Array<{ key: StaffRoleKey; option: string }> = [
+      { key: "juniorMod", option: "junior_mod" },
+      { key: "mod", option: "mod" },
+      { key: "seniorMod", option: "senior_mod" },
+      { key: "headMod", option: "head_mod" },
+      { key: "communityManager", option: "community_manager" },
+    ];
+
+    const updates = tierOptions
+      .map(({ key, option }) => ({ key, role: interaction.options.getRole(option) as Role | null }))
+      .filter((u): u is { key: StaffRoleKey; role: Role } => u.role !== null);
+
+    if (updates.length === 0) {
+      await interaction.editReply("No roles provided. Pass at least one role option to configure tier roles.");
+      return;
+    }
+
+    for (const { key, role } of updates) {
+      upsertStaffRole(db, guild.id, key, role);
+    }
+
+    const lines = updates.map(({ key, role }) => `• **${TIER_DISPLAY[key]}** → ${role.name} (\`${role.id}\`)`);
+    await interaction.editReply(`✅ Staff tier roles updated:\n${lines.join("\n")}\n\nUse \`/setupsecondary list\` to see all configured roles.`);
+    return;
+  }
+
+  // ── /setupsecondary list ──────────────────────────────────────────────────
+  if (subcommand === "list") {
+    await interaction.deferReply({ ephemeral: true });
+
+    const staffRoles = db.listStaffRoles(guild.id);
+    const config = db.getGuildConfig(guild.id);
+
+    const tierLines = TIER_LADDER.map((key) => {
+      const cfg = findTierConfig(key, staffRoles);
+      const label = TIER_DISPLAY[key];
+      return cfg
+        ? `• **${label}** → <@&${cfg.roleId}> (\`${cfg.roleId}\`)`
+        : `• **${label}** → *(not configured)*`;
+    });
+
+    const jailLines = [
+      config.jailedRoleId ? `• Jailed Role: <@&${config.jailedRoleId}>` : `• Jailed Role: *(not set — run \`/setupsecondary jail\`)*`,
+      config.jailCategoryId ? `• Jail Category: <#${config.jailCategoryId}>` : null,
+      config.jailChatId ? `• Jail Chat: <#${config.jailChatId}>` : null,
+      config.jailAnnouncementsId ? `• Jail Announcements: <#${config.jailAnnouncementsId}>` : null,
+    ].filter(Boolean);
+
+    const promoteDemoteRoles = config.promoteDemoteRoleIds.length > 0
+      ? config.promoteDemoteRoleIds.map((id) => `<@&${id}>`).join(", ")
+      : "*(not set — only server admins can promote/demote)*";
+
+    await interaction.editReply(
+      `**Secondary Server Config — ${guild.name}**\n\n` +
+      `**Staff Tier Roles:**\n${tierLines.join("\n")}\n\n` +
+      `**Jail Infrastructure:**\n${jailLines.join("\n")}\n\n` +
+      `**Promote/Demote Roles:** ${promoteDemoteRoles}`
+    );
+    return;
+  }
+
+  // ── /setupsecondary jail ──────────────────────────────────────────────────
+  await interaction.deferReply({ ephemeral: true });
   const lines: string[] = [];
 
   // 1. Create/find the "Jailed" role

@@ -143,8 +143,22 @@ export function buildCommands(options = {}) {
         exportCommand(pointsEnabled),
         new SlashCommandBuilder()
             .setName("setupsecondary")
-            .setDescription("Create the Jailed role, category, and channels for jail-based mute enforcement in this server.")
+            .setDescription("Configure this server as a secondary (community) server — jail setup and mod tier roles.")
             .setDefaultMemberPermissions(headDefault)
+            .addSubcommand((sub) => sub
+            .setName("jail")
+            .setDescription("Create/update the Jailed role, category, and channels for jail-based mutes."))
+            .addSubcommand((sub) => sub
+            .setName("roles")
+            .setDescription("Set which roles correspond to each staff tier in this server (used by /promote and /demote).")
+            .addRoleOption((o) => o.setName("junior_mod").setDescription("Junior Mod role."))
+            .addRoleOption((o) => o.setName("mod").setDescription("Mod role."))
+            .addRoleOption((o) => o.setName("senior_mod").setDescription("Senior Mod role."))
+            .addRoleOption((o) => o.setName("head_mod").setDescription("Head Mod role."))
+            .addRoleOption((o) => o.setName("community_manager").setDescription("Community Manager role.")))
+            .addSubcommand((sub) => sub
+            .setName("list")
+            .setDescription("Show current secondary server config — tier roles and jail setup."))
     ];
     return commands.map((command) => command.toJSON());
 }
