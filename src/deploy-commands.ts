@@ -2,7 +2,7 @@ import { REST, Routes } from "discord.js";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertRuntimeEnv, readEnv } from "./env.js";
-import { buildCommands } from "./commands/definitions.js";
+import { buildCommands, buildSecondaryCommands } from "./commands/definitions.js";
 import { AppDatabase } from "./db.js";
 
 export async function deployCommands(db?: AppDatabase) {
@@ -16,8 +16,11 @@ export async function deployCommands(db?: AppDatabase) {
 
     const guilds = await rest.get(Routes.userGuilds()).catch(() => []) as Array<{ id: string }>;
     for (const guild of guilds) {
-      const pointsEnabled = ownedDb.getGuildConfig(guild.id).pointsEnabled;
-      await deployCommandsForGuild(env.discordToken, env.discordClientId, guild.id, { pointsEnabled });
+      const config = ownedDb.getGuildConfig(guild.id);
+      await deployCommandsForGuild(env.discordToken, env.discordClientId, guild.id, {
+        pointsEnabled: config.pointsEnabled,
+        isSecondary: config.isSecondary
+      });
     }
   } finally {
     if (!db) ownedDb.close();
@@ -29,11 +32,16 @@ async function clearGlobalCommands(rest: REST, clientId: string) {
   console.log("Cleared global commands so Discord does not show duplicate global and server commands.");
 }
 
-export async function deployCommandsForGuild(token: string, clientId: string, guildId: string, options: { pointsEnabled?: boolean } = {}) {
+export async function deployCommandsForGuild(
+  token: string,
+  clientId: string,
+  guildId: string,
+  options: { pointsEnabled?: boolean; isSecondary?: boolean } = {}
+) {
   const rest = new REST({ version: "10" }).setToken(token);
-  const commands = buildCommands(options);
+  const commands = options.isSecondary ? buildSecondaryCommands() : buildCommands(options);
   await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
-  console.log(`Registered ${commands.length} guild commands for ${guildId}.`);
+  console.log(`Registered ${commands.length} ${options.isSecondary ? "secondary" : "primary"} guild commands for ${guildId}.`);
 }
 
 function isMainModule() {

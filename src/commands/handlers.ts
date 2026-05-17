@@ -73,6 +73,15 @@ export type CommandContext = {
   env: AppEnv;
 };
 
+/** Commands available in secondary (community) servers. Everything else is blocked. */
+const SECONDARY_ALLOWED_COMMANDS = new Set([
+  "setupsecondary",
+  "promote",
+  "demote",
+  "fire",
+  "assignroblox",
+]);
+
 export async function handleChatInputCommand(interaction: ChatInputCommandInteraction, context: CommandContext) {
   if (!interaction.guild || !interaction.member) {
     await interaction.reply({ content: "This bot only works inside a server.", ephemeral: true });
@@ -80,6 +89,14 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
   }
 
   context.db.ensureGuild(interaction.guild.id);
+
+  // Secondary server guard — only staff-management commands are available
+  const guildConfig = context.db.getGuildConfig(interaction.guild.id);
+  if (guildConfig.isSecondary && !SECONDARY_ALLOWED_COMMANDS.has(interaction.commandName)) {
+    await interaction.reply({ content: "This command is not available in a secondary server.", ephemeral: true });
+    return;
+  }
+
   const member = interaction.member as GuildMember;
   const access = commandAccess[interaction.commandName] ?? "public";
   if (!canUseAccess(context.db, member, access)) {
@@ -2547,8 +2564,17 @@ async function handleSetupSecondary(
       upsertStaffRole(db, guild.id, key, role);
     }
 
+    // Mark as secondary and redeploy the secondary command set
+    db.updateGuildConfig(guild.id, { is_secondary: 1 });
+    deployCommandsForGuild(context.env.discordToken, context.env.discordClientId, guild.id, { isSecondary: true })
+      .catch((err) => console.error("[setupsecondary] Failed to redeploy secondary commands:", err));
+
     const lines = updates.map(({ key, role }) => `• **${TIER_DISPLAY[key]}** → ${role.name} (\`${role.id}\`)`);
-    await interaction.editReply(`✅ Staff tier roles updated:\n${lines.join("\n")}\n\nUse \`/setupsecondary list\` to see all configured roles.`);
+    await interaction.editReply(
+      `✅ Staff tier roles updated:\n${lines.join("\n")}\n\n` +
+      `This server is now marked as a **secondary server** — only staff-management commands are visible here.\n` +
+      `Use \`/setupsecondary list\` to see all configured roles.`
+    );
     return;
   }
 
@@ -2702,15 +2728,24 @@ async function handleSetupSecondary(
 
   lines.push(`Applied deny-ViewChannel to ${otherCategories.size} other categories and ${topLevelChannels.size} top-level channels.`);
 
-  // 7. Save to guild config
+  // 7. Save to guild config and mark as secondary
   db.updateGuildConfig(guild.id, {
     jailed_role_id: jailedRole.id,
     jail_category_id: jailCategory.id,
     jail_chat_id: jailChat.id,
-    jail_announcements_id: jailAnnouncements.id
+    jail_announcements_id: jailAnnouncements.id,
+    is_secondary: 1
   });
 
-  await interaction.editReply({ content: `**Jail infrastructure set up:**\n${lines.map((l) => `• ${l}`).join("\n")}` });
+  // Redeploy only the secondary command set for this guild
+  deployCommandsForGuild(context.env.discordToken, context.env.discordClientId, guild.id, { isSecondary: true })
+    .catch((err) => console.error("[setupsecondary] Failed to redeploy secondary commands:", err));
+
+  await interaction.editReply({
+    content:
+      `**Jail infrastructure set up:**\n${lines.map((l) => `• ${l}`).join("\n")}\n\n` +
+      `This server is now marked as a **secondary server** — only staff-management commands will be visible here.`
+  });
 }
 
 // ── Assign Roblox ─────────────────────────────────────────────────────────────

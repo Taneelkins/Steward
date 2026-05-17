@@ -758,6 +758,7 @@ export class AppDatabase {
         this.ensureColumn("guild_configs", "junior_approval_points_milli", "INTEGER NOT NULL DEFAULT 500");
         this.ensureColumn("evidence_archives", "source_attachment_key", "TEXT");
         this.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_archives_source_attachment_key ON evidence_archives(guild_id, source_attachment_key);");
+        this.ensureColumn("guild_configs", "is_secondary", "INTEGER NOT NULL DEFAULT 0");
         this.ensureColumn("guild_configs", "jailed_role_id", "TEXT");
         this.ensureColumn("guild_configs", "jail_category_id", "TEXT");
         this.ensureColumn("guild_configs", "jail_chat_id", "TEXT");
@@ -827,6 +828,7 @@ function mapGuildConfig(row) {
         jailChatId: row.jail_chat_id ?? null,
         jailAnnouncementsId: row.jail_announcements_id ?? null,
         promoteDemoteRoleIds: parseStringList(row.promote_demote_role_ids_json),
+        isSecondary: row.is_secondary === 1,
         createdAt: row.created_at,
         updatedAt: row.updated_at
     };

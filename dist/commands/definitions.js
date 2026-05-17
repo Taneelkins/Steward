@@ -162,6 +162,50 @@ export function buildCommands(options = {}) {
     ];
     return commands.map((command) => command.toJSON());
 }
+/**
+ * The minimal command set deployed to secondary (community) servers.
+ * Only staff-management commands that make sense there — no logging, config, quota, etc.
+ */
+export function buildSecondaryCommands() {
+    const commands = [
+        new SlashCommandBuilder()
+            .setName("setupsecondary")
+            .setDescription("Configure this secondary server — jail setup, mod tier roles, and settings.")
+            .setDefaultMemberPermissions(headDefault)
+            .addSubcommand((sub) => sub.setName("jail").setDescription("Create/update the Jailed role, category, and channels for jail-based mutes."))
+            .addSubcommand((sub) => sub
+            .setName("roles")
+            .setDescription("Set which roles correspond to each staff tier in this server.")
+            .addRoleOption((o) => o.setName("junior_mod").setDescription("Junior Mod role."))
+            .addRoleOption((o) => o.setName("mod").setDescription("Mod role."))
+            .addRoleOption((o) => o.setName("senior_mod").setDescription("Senior Mod role."))
+            .addRoleOption((o) => o.setName("head_mod").setDescription("Head Mod role."))
+            .addRoleOption((o) => o.setName("community_manager").setDescription("Community Manager role.")))
+            .addSubcommand((sub) => sub.setName("list").setDescription("Show current secondary server config — tier roles and jail setup.")),
+        new SlashCommandBuilder()
+            .setName("promote")
+            .setDescription("Promote a staff member up one tier in all linked servers.")
+            .addUserOption((o) => o.setName("member").setDescription("The staff member to promote.").setRequired(true))
+            .setDefaultMemberPermissions(headDefault),
+        new SlashCommandBuilder()
+            .setName("demote")
+            .setDescription("Demote a staff member down one tier in all linked servers.")
+            .addUserOption((o) => o.setName("member").setDescription("The staff member to demote.").setRequired(true))
+            .setDefaultMemberPermissions(headDefault),
+        new SlashCommandBuilder()
+            .setName("fire")
+            .setDescription("Remove all staff roles from a member in both linked servers.")
+            .addUserOption((o) => o.setName("member").setDescription("The staff member to fire.").setRequired(true))
+            .addStringOption((o) => o.setName("reason").setDescription("Reason for termination (optional).")),
+        new SlashCommandBuilder()
+            .setName("assignroblox")
+            .setDescription("Link a Roblox username to a staff member's Discord account.")
+            .addUserOption((o) => o.setName("member").setDescription("The staff member.").setRequired(true))
+            .addStringOption((o) => o.setName("roblox_username").setDescription("Their exact Roblox username.").setRequired(true))
+            .setDefaultMemberPermissions(headDefault),
+    ];
+    return commands.map((c) => c.toJSON());
+}
 function configCommand() {
     return new SlashCommandBuilder()
         .setName("config")
