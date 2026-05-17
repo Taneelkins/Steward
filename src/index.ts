@@ -9,6 +9,7 @@ import { AppDatabase } from "./db.js";
 import { assertRuntimeEnv, readEnv } from "./env.js";
 import { deployCommands, deployCommandsForGuild } from "./deploy-commands.js";
 import { handleChatInputCommand, handleRobloxButton, handleRobloxModal, handleAutoPunishButton } from "./commands/handlers.js";
+import { handleCrossServerButton } from "./services/crossServer.js";
 import { handleLoaButton } from "./services/loa.js";
 import { handleSetupPanelButton, handleSetupPanelModal } from "./services/setupPanel.js";
 import { runStartupRecovery, startScheduler } from "./scheduler.js";
@@ -147,6 +148,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return true;
     });
     if (dataHandled) return;
+
+    const crossServerHandled = await handleCrossServerButton(db, interaction).catch(async (error) => {
+      const message = error instanceof Error ? error.message : "Something went wrong.";
+      if (interaction.replied || interaction.deferred) {
+        await interaction.editReply(`Error: ${message}`).catch(() => null);
+      } else {
+        await interaction.reply({ content: `Error: ${message}`, ephemeral: true }).catch(() => null);
+      }
+      return true;
+    });
+    if (crossServerHandled) return;
 
     const robloxHandled = await handleRobloxButton(db, interaction).catch(async (error) => {
       const message = error instanceof Error ? error.message : "Something went wrong.";

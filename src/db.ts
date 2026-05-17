@@ -262,6 +262,15 @@ export class AppDatabase {
     return (result.changes ?? 0) > 0;
   }
 
+  /** Find the main server that has linked_guild_id pointing at this secondary guild. */
+  findMainGuildForSecondary(secondaryGuildId: string): string | null {
+    const row = this.get<{ guild_id: string }>(
+      "SELECT guild_id FROM guild_configs WHERE linked_guild_id = ? LIMIT 1",
+      secondaryGuildId
+    );
+    return row?.guild_id ?? null;
+  }
+
   listRobloxGames(guildId: string): RobloxGame[] {
     return this.all<RobloxGameRow>(
       "SELECT * FROM roblox_games WHERE guild_id = ? ORDER BY created_at ASC",
@@ -1076,6 +1085,7 @@ export class AppDatabase {
     this.ensureColumn("guild_configs", "jail_chat_id", "TEXT");
     this.ensureColumn("guild_configs", "jail_announcements_id", "TEXT");
     this.ensureColumn("guild_configs", "promote_demote_role_ids_json", "TEXT");
+    this.ensureColumn("guild_configs", "crossserver_comms_channel_id", "TEXT");
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
@@ -1139,6 +1149,7 @@ type GuildConfigRow = {
   jail_category_id: string | null;
   jail_chat_id: string | null;
   jail_announcements_id: string | null;
+  crossserver_comms_channel_id: string | null;
   promote_demote_role_ids_json: string | null;
   is_secondary: number;
   created_at: string;
@@ -1320,6 +1331,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     jailCategoryId: row.jail_category_id ?? null,
     jailChatId: row.jail_chat_id ?? null,
     jailAnnouncementsId: row.jail_announcements_id ?? null,
+    crossserverCommsChannelId: row.crossserver_comms_channel_id ?? null,
     promoteDemoteRoleIds: parseStringList(row.promote_demote_role_ids_json),
     isSecondary: row.is_secondary === 1,
     createdAt: row.created_at,

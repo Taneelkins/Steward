@@ -252,6 +252,7 @@ export function configSummaryEmbed(
       { name: "Jail Category", value: config.jailCategoryId ? `<#${config.jailCategoryId}>` : "Not set", inline: true },
       { name: "Jail Chat", value: config.jailChatId ? `<#${config.jailChatId}>` : "Not set", inline: true },
       { name: "Jail Announcements", value: config.jailAnnouncementsId ? `<#${config.jailAnnouncementsId}>` : "Not set", inline: true },
+      { name: "Cross-Server Comms", value: config.crossserverCommsChannelId ? `<#${config.crossserverCommsChannelId}>` : "Not set", inline: true },
       { name: "Promote/Demote Roles", value: config.promoteDemoteRoleIds.length > 0 ? config.promoteDemoteRoleIds.map((id) => `<@&${id}>`).join(", ") : "None", inline: true },
       {
         name: "Auto-Punish",

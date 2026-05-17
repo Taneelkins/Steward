@@ -65,6 +65,7 @@ import { refreshApprovalChannel } from "../services/cases.js";
 import { deployCommandsForGuild } from "../deploy-commands.js";
 import { banRobloxPlayer, formatRobloxDuration, kickActivePlayer, lookupRobloxUser, parseRobloxDuration, readProfileStoreEntry, sendDataEdit, setNestedValue, unbanRobloxPlayer, writeProfileStoreEntry } from "../services/roblox.js";
 import { handleDataCommand } from "../services/playerData.js";
+import { handleCrossJail, handleCrossUnjail, handleCrossBan, handleCrossUnban, handleCrossKick, handleCrossServerButton } from "../services/crossServer.js";
 import { buildLoaApprovalButtons, buildLoaRequestEmbed } from "../services/loa.js";
 import { buildSetupPanel } from "../services/setupPanel.js";
 import { postGoingDown } from "../services/startupAnnouncement.js";
@@ -81,6 +82,11 @@ const SECONDARY_ALLOWED_COMMANDS = new Set([
   "demote",
   "fire",
   "assignroblox",
+  "jail",
+  "unjail",
+  "ban",
+  "unban",
+  "kick",
 ]);
 
 export async function handleChatInputCommand(interaction: ChatInputCommandInteraction, context: CommandContext) {
@@ -263,6 +269,21 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         break;
       case "assignroblox":
         await handleAssignRoblox(interaction, context, member);
+        break;
+      case "jail":
+        await handleCrossJail(interaction, context.db);
+        break;
+      case "unjail":
+        await handleCrossUnjail(interaction, context.db);
+        break;
+      case "ban":
+        await handleCrossBan(interaction, context.db);
+        break;
+      case "unban":
+        await handleCrossUnban(interaction, context.db);
+        break;
+      case "kick":
+        await handleCrossKick(interaction, context.db);
         break;
       default:
         await interaction.reply({ content: "Unknown command.", ephemeral: true });
@@ -582,7 +603,8 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     ticket_tool_bot_id: interaction.options.getString("ticket_tool_bot_id") ?? undefined,
     loa_channel_id: getTextChannelOption(interaction, "loa_channel")?.id,
     loa_log_channel_id: getTextChannelOption(interaction, "loa_log_channel")?.id,
-    shouts_channel_id: getTextChannelOption(interaction, "shouts_channel")?.id
+    shouts_channel_id: getTextChannelOption(interaction, "shouts_channel")?.id,
+    crossserver_comms_channel_id: getTextChannelOption(interaction, "crossserver_comms")?.id
   };
   db.updateGuildConfig(guild.id, values);
   await upsertQuotaStatusMessage(db, guild);

@@ -110,6 +110,38 @@ export function buildCommands(options: CommandBuildOptions = {}) {
 
     loaCommand(),
 
+    // ── Secondary-server cross-server commands ─────────────────────────────
+    new SlashCommandBuilder()
+      .setName("jail")
+      .setDescription("Jail a user in this server and queue a Discord Mute log in the main server.")
+      .addUserOption((o) => o.setName("user").setDescription("User to jail.").setRequired(true))
+      .addStringOption((o) => o.setName("duration").setDescription("Duration, e.g. 7d, 24h, 30m. Omit for indefinite."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("unjail")
+      .setDescription("Unjail a user in this server and queue a Discord Mute appeal in the main server.")
+      .addUserOption((o) => o.setName("user").setDescription("User to unjail.").setRequired(true))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("ban")
+      .setDescription("Ban a user from this server and queue a Discord Ban log in the main server.")
+      .addUserOption((o) => o.setName("user").setDescription("User to ban.").setRequired(true))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("unban")
+      .setDescription("Unban a user from this server and queue a ban appeal in the main server.")
+      .addStringOption((o) => o.setName("user_id").setDescription("Discord user ID to unban.").setRequired(true))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("kick")
+      .setDescription("Kick a user from this server and queue a Discord Kick log in the main server.")
+      .addUserOption((o) => o.setName("user").setDescription("User to kick.").setRequired(true))
+      .setDefaultMemberPermissions(normalDefault),
+
     new SlashCommandBuilder()
       .setName("lookup")
       .setDescription("Search all case logs by target identity.")
@@ -328,6 +360,7 @@ function configCommand() {
         .addChannelOption((option) => textChannelOption(option, "loa_channel", "LOA approval channel (requests are posted here for Head Mod+ to review)."))
         .addChannelOption((option) => textChannelOption(option, "loa_log_channel", "LOA log channel (approved LOAs are posted here)."))
         .addChannelOption((option) => textChannelOption(option, "shouts_channel", "Shouts channel (bot restart announcements are posted here)."))
+        .addChannelOption((option) => textChannelOption(option, "crossserver_comms", "Cross-server comms channel (users are pinged here when actioned from secondary server)."))
         .addUserOption((option) => option.setName("owner").setDescription("Owner/admin DM target."))
         .addStringOption((option) => option.setName("ticket_tool_bot_id").setDescription("Ticket Tool bot user ID."))
     )

@@ -52,6 +52,7 @@ export type GuildConfig = {
   jailCategoryId: string | null;
   jailChatId: string | null;
   jailAnnouncementsId: string | null;
+  crossserverCommsChannelId: string | null;
   promoteDemoteRoleIds: string[];
   isSecondary: boolean;
   createdAt: string;

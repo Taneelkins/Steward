@@ -307,16 +307,16 @@ const logActions: LogActionButton[] = [
 
 const discordSubTypes = [
   { id: "warn", label: "Warn", displayName: "Discord Warn" },
-  { id: "timeout", label: "Timeout", displayName: "Discord Timeout" },
   { id: "mute", label: "Mute", displayName: "Discord Mute" },
+  { id: "kick", label: "Kick", displayName: "Discord Kick" },
   { id: "ban", label: "Ban", displayName: "Discord Ban" }
 ];
 
 const appealTypes = [
   { id: "ban", label: "Ban", displayValue: "Ban" },
-  { id: "timeout", label: "Timeout", displayValue: "Timeout" },
   { id: "warn", label: "Warn", displayValue: "Warn" },
   { id: "mute", label: "Mute", displayValue: "Mute" },
+  { id: "kick", label: "Kick", displayValue: "Kick" },
   { id: "ingame-ban", label: "Ingame Ban", displayValue: "Ingame Ban" },
   { id: "other", label: "Other", displayValue: "Other" }
 ];
@@ -434,6 +434,75 @@ export async function startEditLog(interaction: ChatInputCommandInteraction, db:
 
   sessions.set(draft.id, draft);
   sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
+  await interaction.reply({ ...previewPayload(db, draft), ephemeral: true });
+  draft.editReply = (payload) => interaction.editReply(payload);
+  touchDraft(draft);
+}
+
+/**
+ * Open a pre-filled interactive log for a staff member who clicked the
+ * "Fill in Details" button on a cross-server pending-log embed.
+ * Starts at the "fields" stage with action type and target already populated.
+ */
+export async function startPrefilledLogFromButton(
+  interaction: import("discord.js").ButtonInteraction,
+  db: AppDatabase,
+  prefill: {
+    actionName: string;
+    actionDisplayName: string;
+    appealType?: string | null;
+    discordId?: string | null;
+    discordUsername?: string | null;
+    punishmentLength?: string | null;
+  }
+): Promise<void> {
+  const guild = interaction.guild!;
+  const member = interaction.member as GuildMember;
+  const tier = getStaffTier(db, member);
+  const isHeadMod = tier === "head" || tier === "community" || member.permissions.has(PermissionFlagsBits.Administrator);
+
+  await cancelPendingLogForUser(guild.id, member.id, "Previous pending log cancelled — cross-server log started.");
+
+  const draft: LogDraft = {
+    id: randomUUID().replace(/-/g, "").slice(0, 12),
+    guildId: guild.id,
+    userId: member.id,
+    channelId: interaction.channelId,
+    stage: "fields",
+    actionName: prefill.actionName,
+    actionDisplayName: prefill.actionDisplayName,
+    appealType: prefill.appealType ?? null,
+    appealResult: null,
+    ingameRuleResult: null,
+    punishmentLength: prefill.punishmentLength ?? null,
+    targetInfo: {
+      robloxUsername: null,
+      discordUsername: prefill.discordUsername ?? null,
+      robloxId: null,
+      discordId: prefill.discordId ?? null
+    },
+    reason: null,
+    evidence: null,
+    notes: null,
+    noAction: false,
+    isTicketedAction: null,
+    transcriptUrl: null,
+    mediaLinks: [],
+    mediaMessageIds: [],
+    mediaCaptureEnabled: false,
+    happenedAt: null,
+    isHeadMod,
+    editCaseId: null,
+    statusMessage: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    timeout: null,
+    editReply: null
+  };
+
+  sessions.set(draft.id, draft);
+  sessionsByUser.set(sessionUserKey(draft.guildId, draft.userId), draft.id);
+  saveDraftToDisk(draft);
   await interaction.reply({ ...previewPayload(db, draft), ephemeral: true });
   draft.editReply = (payload) => interaction.editReply(payload);
   touchDraft(draft);
