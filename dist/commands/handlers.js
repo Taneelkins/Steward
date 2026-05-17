@@ -33,9 +33,10 @@ export async function handleChatInputCommand(interaction, context) {
         return;
     }
     context.db.ensureGuild(interaction.guild.id);
-    // Secondary server guard — only staff-management commands are available
+    // Secondary server guard — only staff-management commands are available (dev bypasses)
+    const DEV_USER_ID = "616267913799925782";
     const guildConfig = context.db.getGuildConfig(interaction.guild.id);
-    if (guildConfig.isSecondary && !SECONDARY_ALLOWED_COMMANDS.has(interaction.commandName)) {
+    if (guildConfig.isSecondary && !SECONDARY_ALLOWED_COMMANDS.has(interaction.commandName) && interaction.user.id !== DEV_USER_ID) {
         await interaction.reply({ content: "This command is not available in a secondary server.", ephemeral: true });
         return;
     }
