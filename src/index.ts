@@ -36,6 +36,10 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
+// True once the ClientReady handler has finished — gates GuildCreate deploys
+// so we don't re-deploy to every existing guild on every startup.
+let botReady = false;
+
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}.`);
   if (env.registerCommandsOnStartup) {
@@ -46,9 +50,12 @@ client.once(Events.ClientReady, async (readyClient) => {
   saveShoutsChannels(db, readyClient, path.dirname(env.databasePath));
   startScheduler(db, readyClient, env.schedulerIntervalSeconds);
   console.log("Startup recovery finished. Scheduler is running.");
+  botReady = true;
 });
 
 client.on(Events.GuildCreate, async (guild) => {
+  // Skip guilds that Discord sends during the initial ready burst
+  if (!botReady) return;
   const pointsEnabled = db.getGuildConfig(guild.id).pointsEnabled;
   await deployCommandsForGuild(env.discordToken, env.discordClientId, guild.id, { pointsEnabled }).catch((error) => {
     console.error(`Could not register commands for new guild ${guild.id}:`, error);
