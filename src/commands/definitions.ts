@@ -117,7 +117,7 @@ export function buildCommands(options: CommandBuildOptions = {}) {
       .addUserOption((o) => o.setName("user").setDescription("User to jail.").setRequired(true))
       .addStringOption((o) => o.setName("duration").setDescription("Duration, e.g. 7d, 24h, 30m. Omit for indefinite."))
       .addStringOption((o) => o.setName("reason").setDescription("Reason for the action (pre-fills the log)."))
-      .setDefaultMemberPermissions(normalDefault),
+      .setDefaultMemberPermissions(juniorDefault),
 
     new SlashCommandBuilder()
       .setName("unjail")
@@ -152,7 +152,7 @@ export function buildCommands(options: CommandBuildOptions = {}) {
       .setDescription("Warn a user in this server and queue a Discord Warn log in the main server.")
       .addUserOption((o) => o.setName("user").setDescription("User to warn.").setRequired(true))
       .addStringOption((o) => o.setName("reason").setDescription("Reason for the warning (pre-fills the log)."))
-      .setDefaultMemberPermissions(normalDefault),
+      .setDefaultMemberPermissions(juniorDefault),
 
     new SlashCommandBuilder()
       .setName("lookup")

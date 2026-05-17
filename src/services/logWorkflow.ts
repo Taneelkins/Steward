@@ -455,6 +455,7 @@ export async function startPrefilledLogFromButton(
     discordUsername?: string | null;
     punishmentLength?: string | null;
     reason?: string | null;
+    isTicketedAction?: boolean | null;
   }
 ): Promise<void> {
   const guild = interaction.guild!;
@@ -486,7 +487,7 @@ export async function startPrefilledLogFromButton(
     evidence: null,
     notes: null,
     noAction: false,
-    isTicketedAction: null,
+    isTicketedAction: prefill.isTicketedAction ?? null,
     transcriptUrl: null,
     mediaLinks: [],
     mediaMessageIds: [],

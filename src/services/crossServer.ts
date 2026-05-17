@@ -33,6 +33,18 @@ import { startPrefilledLogFromButton } from "./logWorkflow.js";
 import { writeAuditAndPost } from "./audit.js";
 import { parseRobloxDuration, formatRobloxDuration } from "./roblox.js";
 import { colors } from "../utils/theme.js";
+import { getStaffTier } from "../utils/discord.js";
+import { tierAllows } from "./access.js";
+
+// ── Permission helpers ────────────────────────────────────────────────────────
+
+/** Returns true if the interaction member has at least mod (normal) tier. */
+function isMod(db: AppDatabase, interaction: ChatInputCommandInteraction): boolean {
+  const member = interaction.member as GuildMember | null;
+  if (!member) return false;
+  const tier = getStaffTier(db, member);
+  return tierAllows(tier, "normal");
+}
 
 // ── Action map ────────────────────────────────────────────────────────────────
 
@@ -244,6 +256,11 @@ export async function handleCrossJail(interaction: ChatInputCommandInteraction, 
 
 export async function handleCrossUnjail(interaction: ChatInputCommandInteraction, db: AppDatabase) {
   const guild = interaction.guild!;
+  if (!isMod(db, interaction)) {
+    await interaction.reply({ content: "❌ You need the Mod role or higher to use this command.", ephemeral: true });
+    return;
+  }
+
   const config = db.getGuildConfig(guild.id);
 
   if (!config.jailedRoleId) {
@@ -307,6 +324,11 @@ export async function handleCrossUnjail(interaction: ChatInputCommandInteraction
 
 export async function handleCrossBan(interaction: ChatInputCommandInteraction, db: AppDatabase) {
   const guild = interaction.guild!;
+  if (!isMod(db, interaction)) {
+    await interaction.reply({ content: "❌ You need the Mod role or higher to use this command.", ephemeral: true });
+    return;
+  }
+
   const target = interaction.options.getUser("user");
   if (!target) {
     await interaction.reply({ content: "❌ User not found.", ephemeral: true });
@@ -351,6 +373,11 @@ export async function handleCrossBan(interaction: ChatInputCommandInteraction, d
 
 export async function handleCrossUnban(interaction: ChatInputCommandInteraction, db: AppDatabase) {
   const guild = interaction.guild!;
+  if (!isMod(db, interaction)) {
+    await interaction.reply({ content: "❌ You need the Mod role or higher to use this command.", ephemeral: true });
+    return;
+  }
+
   const userId = interaction.options.getString("user_id", true).trim();
 
   if (!/^\d{17,19}$/.test(userId)) {
@@ -394,6 +421,11 @@ export async function handleCrossUnban(interaction: ChatInputCommandInteraction,
 
 export async function handleCrossKick(interaction: ChatInputCommandInteraction, db: AppDatabase) {
   const guild = interaction.guild!;
+  if (!isMod(db, interaction)) {
+    await interaction.reply({ content: "❌ You need the Mod role or higher to use this command.", ephemeral: true });
+    return;
+  }
+
   const target = interaction.options.getMember("user") as GuildMember | null;
   if (!target) {
     await interaction.reply({ content: "❌ User not found in this server.", ephemeral: true });
@@ -507,7 +539,8 @@ export async function handleCrossServerButton(db: AppDatabase, interaction: Butt
     discordId,
     discordUsername,
     punishmentLength: duration || null,
-    reason
+    reason,
+    isTicketedAction: false   // cross-server actions are always non-ticketed
   });
 
   return true;
