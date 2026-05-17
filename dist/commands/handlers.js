@@ -2152,17 +2152,15 @@ async function handleSetupSecondary(interaction, context, _member) {
         for (const { key, role } of results) {
             upsertStaffRole(db, guild.id, key, role);
         }
-        // Mark as secondary and redeploy the secondary command set
+        // Mark as secondary — command set will be trimmed on next bot restart
         db.updateGuildConfig(guild.id, { is_secondary: 1 });
-        deployCommandsForGuild(context.env.discordToken, context.env.discordClientId, guild.id, { isSecondary: true })
-            .catch((err) => console.error("[setupsecondary] Failed to redeploy secondary commands:", err));
         const sourceLabel = { explicit: "✅ set", "name-match": "🔍 auto-detected", saved: "💾 kept from DB" };
         const lines = results.map(({ key, role, source }) => `• **${TIER_DISPLAY[key]}** → ${role.name} (\`${role.id}\`) — ${sourceLabel[source]}`);
         const missingLines = notFound.length > 0
             ? `\n\n⚠️ Not found (set manually with role options): ${notFound.map((k) => `**${TIER_DISPLAY[k]}**`).join(", ")}`
             : "";
         await interaction.editReply(`**Staff tier roles configured:**\n${lines.join("\n")}${missingLines}\n\n` +
-            `This server is now marked as a **secondary server** — only staff-management commands are visible here.`);
+            `This server is now marked as a **secondary server**.\n🔄 Restart the bot to apply the trimmed command set to this server.`);
         return;
     }
     // ── /setupsecondary list ──────────────────────────────────────────────────
@@ -2293,12 +2291,9 @@ async function handleSetupSecondary(interaction, context, _member) {
         jail_announcements_id: jailAnnouncements.id,
         is_secondary: 1
     });
-    // Redeploy only the secondary command set for this guild
-    deployCommandsForGuild(context.env.discordToken, context.env.discordClientId, guild.id, { isSecondary: true })
-        .catch((err) => console.error("[setupsecondary] Failed to redeploy secondary commands:", err));
     await interaction.editReply({
         content: `**Jail infrastructure set up:**\n${lines.map((l) => `• ${l}`).join("\n")}\n\n` +
-            `This server is now marked as a **secondary server** — only staff-management commands will be visible here.`
+            `This server is now marked as a **secondary server**.\n🔄 Restart the bot to apply the trimmed command set to this server.`
     });
 }
 // ── Assign Roblox ─────────────────────────────────────────────────────────────
