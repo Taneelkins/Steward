@@ -48,6 +48,11 @@ export type GuildConfig = {
   loaLogChannelId: string | null;
   shoutsChannelId: string | null;
   juniorApprovalPointsMilli: number;
+  jailedRoleId: string | null;
+  jailCategoryId: string | null;
+  jailChatId: string | null;
+  jailAnnouncementsId: string | null;
+  promoteDemoteRoleIds: string[];
   createdAt: string;
   updatedAt: string;
 };

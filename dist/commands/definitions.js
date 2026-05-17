@@ -118,7 +118,33 @@ export function buildCommands(options = {}) {
             .setName("refresh")
             .setDescription("Clear and re-post all pending CM approval requests in the approval channel.")
             .setDefaultMemberPermissions(communityDefault),
-        exportCommand(pointsEnabled)
+        new SlashCommandBuilder()
+            .setName("promote")
+            .setDescription("Promote a staff member up one tier (Junior → Mod → Senior → Head → CM) in all linked servers.")
+            .addUserOption((option) => option.setName("member").setDescription("The staff member to promote.").setRequired(true))
+            .setDefaultMemberPermissions(headDefault),
+        new SlashCommandBuilder()
+            .setName("demote")
+            .setDescription("Demote a staff member down one tier (CM → Head → Senior → Mod → Junior) in all linked servers.")
+            .addUserOption((option) => option.setName("member").setDescription("The staff member to demote.").setRequired(true))
+            .setDefaultMemberPermissions(headDefault),
+        new SlashCommandBuilder()
+            .setName("fire")
+            .setDescription("Remove all staff roles from a member in both linked servers.")
+            .addUserOption((option) => option.setName("member").setDescription("The staff member to fire.").setRequired(true))
+            .addStringOption((option) => option.setName("reason").setDescription("Reason for termination (optional)."))
+            .setDefaultMemberPermissions(headDefault),
+        new SlashCommandBuilder()
+            .setName("assignroblox")
+            .setDescription("Link a Roblox username to a staff member's Discord account for future group management.")
+            .addUserOption((option) => option.setName("member").setDescription("The staff member.").setRequired(true))
+            .addStringOption((option) => option.setName("roblox_username").setDescription("Their exact Roblox username.").setRequired(true))
+            .setDefaultMemberPermissions(headDefault),
+        exportCommand(pointsEnabled),
+        new SlashCommandBuilder()
+            .setName("setupsecondary")
+            .setDescription("Create the Jailed role, category, and channels for jail-based mute enforcement in this server.")
+            .setDefaultMemberPermissions(headDefault)
     ];
     return commands.map((command) => command.toJSON());
 }
@@ -177,7 +203,8 @@ function configCommand() {
         .setName("junior_approval_points")
         .setDescription("Quota points awarded to a mod for approving a junior log (default: 0.5). Set to 0 to disable.")
         .setMinValue(0)
-        .setMaxValue(100)))
+        .setMaxValue(100))
+        .addRoleOption((o) => o.setName("promote_demote_role").setDescription("Role that can use /promote and /demote (in addition to admins).")))
         .addSubcommand((sub) => sub
         .setName("check")
         .setDescription("Show which configs are set and which are missing."))

@@ -9,6 +9,7 @@ export async function runStartupRecovery(db: AppDatabase, client: Client) {
   }
   await processPersistentTimeouts(db, client);
   await processScheduledUnbans(db, client);
+  await processScheduledUnjails(db, client);
 }
 
 export function startScheduler(db: AppDatabase, client: Client, intervalSeconds: number) {
@@ -23,6 +24,9 @@ export function startScheduler(db: AppDatabase, client: Client, intervalSeconds:
     });
     processScheduledUnbans(db, client).catch((error) => {
       console.error("Scheduled unban processing failed:", error);
+    });
+    processScheduledUnjails(db, client).catch((error) => {
+      console.error("Scheduled unjail processing failed:", error);
     });
   }, Math.max(intervalSeconds, 10) * 1000);
   interval.unref();
@@ -81,6 +85,34 @@ async function processScheduledUnbans(db: AppDatabase, client: Client) {
       }
     } catch (error) {
       console.error(`Failed to process scheduled unban for ${row.discord_target_id}:`, error);
+    }
+  }
+}
+
+async function processScheduledUnjails(db: AppDatabase, client: Client) {
+  const due = db.getDueScheduledUnjails();
+  for (const row of due) {
+    try {
+      const linkedGuild = await client.guilds.fetch(row.linked_guild_id).catch(() => null);
+      if (!linkedGuild) { db.deleteScheduledUnjail(row.id); continue; }
+      const member = await linkedGuild.members.fetch(row.discord_target_id).catch(() => null);
+      if (!member) { db.deleteScheduledUnjail(row.id); continue; }
+
+      const linkedConfig = db.getGuildConfig(row.linked_guild_id);
+      const savedRoleIds: string[] = JSON.parse(row.saved_role_ids_json) as string[];
+      const validRoleIds = savedRoleIds.filter(
+        (id) => linkedGuild.roles.cache.has(id) && id !== linkedConfig.jailedRoleId
+      );
+
+      await member.roles.set(validRoleIds, "Mute expired — roles restored").catch(() => null);
+      db.deleteScheduledUnjail(row.id);
+
+      const user = await client.users.fetch(row.discord_target_id).catch(() => null);
+      if (user) {
+        await user.send(`Your mute in ${linkedGuild.name} has expired. Your roles have been restored.`).catch(() => null);
+      }
+    } catch (error) {
+      console.error(`Failed to process scheduled unjail for ${row.discord_target_id}:`, error);
     }
   }
 }

@@ -45,9 +45,9 @@ export type CaseFlags = {
 const FAST_POINTS_WINDOW_MINUTES = 15;
 const FAST_POINTS_THRESHOLD_MILLI = 10000;
 
-export function buildCaseLogEmbed(record: ModerationCase, options: { showPoints?: boolean; warningNumber?: number; punishmentExecuted?: boolean; ingameBanExecuted?: boolean; ingameBanFailed?: string; ingameUnbanExecuted?: boolean; ingameUnbanFailed?: string } = {}) {
+export function buildCaseLogEmbed(record: ModerationCase, options: { showPoints?: boolean; warningNumber?: number; punishmentExecuted?: boolean; punishmentBypassed?: boolean; ingameBanExecuted?: boolean; ingameBanFailed?: string; ingameBanFailedPingMod?: boolean; ingameUnbanExecuted?: boolean; ingameUnbanFailed?: string } = {}) {
   const showPoints = options.showPoints ?? true;
-  const { warningNumber, punishmentExecuted, ingameBanExecuted, ingameBanFailed, ingameUnbanExecuted, ingameUnbanFailed } = options;
+  const { warningNumber, punishmentExecuted, punishmentBypassed, ingameBanExecuted, ingameBanFailed, ingameUnbanExecuted, ingameUnbanFailed } = options;
   const isWarnLog = ((record.actionDisplayName ?? record.actionName).toLowerCase().includes("warn") && record.actionName === "discord");
   const appealStatus = record.appealResult === "accepted" ? "Appeal Approved" : record.appealResult === "denied" ? "Appeal Denied" : null;
   const information = [
@@ -81,6 +81,10 @@ export function buildCaseLogEmbed(record: ModerationCase, options: { showPoints?
     // Punishment executed stamp — added after ban/kick/timeout is carried out
     ...(!isWarnLog && punishmentExecuted
       ? [{ name: "⚡ Punishment Executed", value: "**Punishment Executed**", inline: false }]
+      : []),
+    // Punishment bypassed stamp — when a mod bypasses execution
+    ...(!isWarnLog && punishmentBypassed
+      ? [{ name: "⏭️ Punishment Bypassed", value: "**Punishment was bypassed by a moderator.**", inline: false }]
       : []),
     // Ingame ban auto-execution stamp
     ...(ingameBanExecuted ? [{ name: "⚡ Ingame Ban Executed", value: "**Player has been banned in-game.**", inline: false }] : []),
@@ -454,6 +458,26 @@ async function stampCaseLog(
 }
 
 /**
+ * Post a failure message with [Update Roblox Username] + [Bypass Punishment] buttons to the log channel.
+ * Called when an ingame ban auto-execution fails.
+ */
+async function postRobloxFixMessage(db: AppDatabase, guild: Guild, record: ModerationCase, errorMsg: string): Promise<void> {
+  const config = db.getGuildConfig(guild.id);
+  const logChannelId = record.logChannelId
+    ?? db.getActionLogChannelId(guild.id, record.actionName)
+    ?? config.actionLogChannelId;
+  if (!logChannelId) return;
+  const ch = await getTextChannel(guild, logChannelId);
+  if (!ch) return;
+  const fixRow = buildFixRobloxComponents(record.id);
+  await ch.send({
+    content: `⚠️ <@${record.moderatorUserId}> — In-game ban for Case #${record.id} could not be executed: **${errorMsg}**\nPlease update the Roblox username or bypass the punishment.`,
+    components: [fixRow],
+    allowedMentions: { users: [record.moderatorUserId] }
+  }).catch(() => null);
+}
+
+/**
  * Auto-execute an in-game ban for a case. Fire-and-forget safe — errors are caught internally.
  * Pass the caseId so we always work off the freshest record (log message IDs populated).
  */
@@ -476,7 +500,10 @@ export async function autoExecuteIngameBan(db: AppDatabase, guild: Guild, caseId
 
   const robloxUserId = await resolveRobloxUserId(record);
   if (!robloxUserId) {
-    await stampCaseLog(db, guild, record, { ingameBanFailed: "No Roblox username or ID on this case — ban not executed." }).catch(() => null);
+    const failMsg = "No Roblox username or ID on this case — ban not executed.";
+    await stampCaseLog(db, guild, record, { ingameBanFailed: failMsg }).catch(() => null);
+    // Ping the mod with fix buttons so they can supply a Roblox username or bypass
+    await postRobloxFixMessage(db, guild, record, failMsg).catch(() => null);
     return;
   }
 
@@ -494,7 +521,9 @@ export async function autoExecuteIngameBan(db: AppDatabase, guild: Guild, caseId
     await kickActivePlayer(game.universeId, game.apiKey, robloxUserId, record.reason);
     await stampCaseLog(db, guild, record, { ingameBanExecuted: true }).catch(() => null);
   } else {
-    await stampCaseLog(db, guild, record, { ingameBanFailed: result.error }).catch(() => null);
+    const failMsg = result.error ?? "Roblox ban failed.";
+    await stampCaseLog(db, guild, record, { ingameBanFailed: failMsg }).catch(() => null);
+    await postRobloxFixMessage(db, guild, record, failMsg).catch(() => null);
   }
 }
 
@@ -691,9 +720,11 @@ export function getStrikeTotal(db: AppDatabase, guildId: string, targetUserId: s
 }
 
 function isJuniorOnlyMod(db: AppDatabase, member: GuildMember): boolean {
-  const roles = db.listStaffRoles(member.guild.id);
-  const hasRoleKey = (key: string) => roles.some((role) => role.key === key && member.roles.cache.has(role.roleId));
-  return hasRoleKey("juniorMod") && !hasRoleKey("mod") && !hasRoleKey("seniorMod") && !hasRoleKey("headMod") && !hasRoleKey("communityManager");
+  // Use getStaffTier so we get the same name-fallback logic used everywhere else.
+  // Previously this used a raw role-ID check which returned false when the role
+  // ID didn't match (e.g. role was re-created), causing auto-punish to fire
+  // immediately instead of waiting for senior mod approval.
+  return getStaffTier(db, member) === "junior";
 }
 
 function getJuniorEscalation(db: AppDatabase, member: GuildMember, actionName: string) {
@@ -1085,7 +1116,9 @@ export async function handleJuniorReviewButton(db: AppDatabase, interaction: But
     const appealChannel = record.actionName === "appeal" ? config2.appealLogChannelId : null;
     const logChannelId2 = appealChannel ?? db.getActionLogChannelId(interaction.guild.id, record.actionName) ?? config2.actionLogChannelId;
     const logEmbed = buildCaseLogEmbed(record, { showPoints: config.pointsEnabled });
+    const executeRow = buildExecutePunishmentButton(record, config2);
     const linkComponents = caseLinkComponents(record.transcriptUrl, record.mediaLinks, record.id);
+    const allComponents = [...(executeRow ? [executeRow] : []), ...linkComponents];
     let juniorLogMsg = null;
     if (logChannelId2) {
       juniorLogMsg = await getTextChannel(interaction.guild, logChannelId2).then((ch) => {
@@ -1094,9 +1127,9 @@ export async function handleJuniorReviewButton(db: AppDatabase, interaction: But
           return null;
         }
         return ch.send({
-          content: `Junior Mod <@${record.moderatorUserId}> ticket verified by Moderator <@${interaction.user.id}>`,
+          content: `Junior Mod <@${record.moderatorUserId}> log verified by Moderator <@${interaction.user.id}>`,
           embeds: [logEmbed],
-          ...(linkComponents.length > 0 ? { components: linkComponents } : {}),
+          ...(allComponents.length > 0 ? { components: allComponents } : {}),
           allowedMentions: { users: [record.moderatorUserId, interaction.user.id] }
         }).catch((err) => {
           console.error(`[junior-review] Failed to post log to channel ${logChannelId2}:`, err);
@@ -1286,6 +1319,32 @@ function mapCaseToPunishment(record: ModerationCase): DiscordPunishment {
   return { kind: "warn" };
 }
 
+function buildFixDiscordComponents(caseId: number): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`fix_discord_id:${caseId}`)
+      .setLabel("🔄 Update Discord ID")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`bypass_punishment:${caseId}`)
+      .setLabel("⏭️ Bypass Punishment")
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function buildFixRobloxComponents(caseId: number): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`fix_roblox_id:${caseId}`)
+      .setLabel("🔄 Update Roblox Username")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`bypass_punishment:${caseId}`)
+      .setLabel("⏭️ Bypass Punishment")
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
 export function buildExecutePunishmentButton(record: ModerationCase, config: { linkedGuildId: string | null; autoPunishDisabled?: string[] }): ActionRowBuilder<ButtonBuilder> | null {
   if (!config.linkedGuildId) return null;
   if (!extractDiscordTargetId(record)) return null;
@@ -1316,12 +1375,6 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
   const record = db.getCase(interaction.guild.id, caseId);
   if (!record) {
     await interaction.editReply(`Case #${caseId} not found.`);
-    return true;
-  }
-
-  const DEV_USER_ID = "616267913799925782";
-  if (interaction.user.id !== record.moderatorUserId && interaction.user.id !== DEV_USER_ID) {
-    await interaction.editReply("Only the moderator who submitted this case can execute the punishment.");
     return true;
   }
 
@@ -1362,8 +1415,19 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
       } else if (appealTypeLower.includes("timeout") || appealTypeLower.includes("mute")) {
         const member = await linkedGuild.members.fetch(discordTargetId).catch(() => null);
         if (!member) throw new Error("User is not in the linked server.");
-        await member.timeout(null, `Appeal #${record.id} accepted`);
-        resultMsg = `<@${discordTargetId}>'s timeout has been **removed** in **${linkedGuild.name}**.`;
+
+        // Check if this user has saved roles from a jail-based mute
+        const jailedRow = db.getJailedMember(config.linkedGuildId, discordTargetId);
+        if (jailedRow) {
+          const savedRoleIds: string[] = JSON.parse(jailedRow.saved_role_ids_json) as string[];
+          const validRoleIds = savedRoleIds.filter((id) => linkedGuild.roles.cache.has(id));
+          await member.roles.set(validRoleIds, `Appeal #${record.id} accepted — roles restored`);
+          db.deleteUnjailForTarget(config.linkedGuildId, discordTargetId);
+          resultMsg = `<@${discordTargetId}>'s jail mute has been **reversed** and roles restored in **${linkedGuild.name}**.`;
+        } else {
+          await member.timeout(null, `Appeal #${record.id} accepted`);
+          resultMsg = `<@${discordTargetId}>'s timeout has been **removed** in **${linkedGuild.name}**.`;
+        }
       } else if (appealTypeLower.includes("kick")) {
         resultMsg = `Kick reversed (informational — cannot undo a kick).`;
         const ch = linkedGuild.channels.cache.find(c => c.type === ChannelType.GuildText) as TextChannel | undefined;
@@ -1484,6 +1548,7 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
 
   let success = true;
   let errorMsg = "";
+  let usedJailSystem = false;
   try {
     if (punishment.kind === "ban") {
       await linkedGuild.members.ban(discordTargetId, { reason: auditReason, deleteMessageSeconds: 0 });
@@ -1495,10 +1560,40 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
       const member = await linkedGuild.members.fetch(discordTargetId).catch(() => null);
       if (!member) { success = false; errorMsg = "User is not in the linked server."; }
       else {
-        const MAX_TIMEOUT = 27 * 24 * 60 * 60 * 1000; // 27 days (safely under Discord's 28-day limit)
-        const capped = Math.min(punishment.durationMs, MAX_TIMEOUT);
-        await member.timeout(capped, auditReason);
-        if (capped < punishment.durationMs) errorMsg = `(Duration capped at 27 days — Discord's maximum)`;
+        // Try jail system first
+        const linkedConfig = db.getGuildConfig(config.linkedGuildId);
+        let triedJail = false;
+        if (linkedConfig.jailedRoleId) {
+          try {
+            const jailedRole = await linkedGuild.roles.fetch(linkedConfig.jailedRoleId).catch(() => null);
+            if (jailedRole) {
+              const savedRoleIds = member.roles.cache
+                .filter((r) => r.id !== linkedGuild.roles.everyone.id && r.id !== jailedRole.id)
+                .map((r) => r.id);
+              await member.roles.set([jailedRole], auditReason);
+              const rawDuration = parsePunishmentLength(record.punishmentLength);
+              const unjailAt = rawDuration ? new Date(Date.now() + rawDuration).toISOString() : null;
+              db.scheduleUnjail({
+                guildId: interaction.guild!.id,
+                linkedGuildId: config.linkedGuildId,
+                discordTargetId,
+                caseId: record.id,
+                savedRoleIds,
+                unjailAt
+              });
+              usedJailSystem = true;
+              triedJail = true;
+            }
+          } catch {
+            triedJail = false;
+          }
+        }
+        if (!triedJail) {
+          const MAX_TIMEOUT = 27 * 24 * 60 * 60 * 1000; // 27 days (safely under Discord's 28-day limit)
+          const capped = Math.min(punishment.durationMs, MAX_TIMEOUT);
+          await member.timeout(capped, auditReason);
+          if (capped < punishment.durationMs) errorMsg = `(Duration capped at 27 days — Discord's maximum)`;
+        }
       }
     }
   } catch (err) {
@@ -1511,8 +1606,8 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
   });
 
   if (success) {
-    // Schedule persistent timeout renewal for indefinite or >27-day timeouts
-    if (punishment.kind === "timeout") {
+    // Schedule persistent timeout renewal for indefinite or >27-day timeouts (only if not using jail system)
+    if (punishment.kind === "timeout" && !usedJailSystem) {
       const rawDuration = parsePunishmentLength(record.punishmentLength);
       const MAX_TIMEOUT = 27 * 24 * 60 * 60 * 1000;
       if (!rawDuration || rawDuration > MAX_TIMEOUT) {
@@ -1558,7 +1653,11 @@ export async function handleExecutePunishment(db: AppDatabase, interaction: Butt
     const capNote = errorMsg ? `\n⚠️ ${errorMsg}` : "";
     await interaction.editReply(`✅ <@${discordTargetId}> has been ${actionLabel} in **${linkedGuild.name}**.${dmNote}${capNote}`);
   } else {
-    await interaction.editReply(`❌ Failed to ${punishment.kind} \`${discordTargetId}\`: ${errorMsg}\n\nCheck bot permissions in the linked server.`);
+    const fixRow = buildFixDiscordComponents(record.id);
+    await interaction.editReply({
+      content: `❌ Failed to ${punishment.kind} <@${discordTargetId}>: **${errorMsg}**\n\nUse the buttons below to fix the issue or bypass this punishment.`,
+      components: [fixRow]
+    });
   }
   return true;
 }
@@ -1651,6 +1750,199 @@ async function maybePostFastPointsAlert(db: AppDatabase, guild: Guild, record: M
     entries: summary?.count ?? 0,
     windowMinutes: FAST_POINTS_WINDOW_MINUTES
   });
+}
+
+// ── Fix-punishment button + modal handlers ─────────────────────────────────
+
+/**
+ * Handles fix_discord_id:<caseId>, fix_roblox_id:<caseId>, and bypass_punishment:<caseId> buttons.
+ */
+export async function handleFixPunishmentButton(db: AppDatabase, interaction: ButtonInteraction): Promise<boolean> {
+  const { customId } = interaction;
+  if (
+    !customId.startsWith("fix_discord_id:") &&
+    !customId.startsWith("fix_roblox_id:") &&
+    !customId.startsWith("bypass_punishment:")
+  ) return false;
+  if (!interaction.guild) return false;
+
+  const parts = customId.split(":");
+  const action = parts[0];
+  const caseId = parseInt(parts[1], 10);
+  if (isNaN(caseId)) return false;
+
+  const record = db.getCase(interaction.guild.id, caseId);
+  if (!record) {
+    await interaction.reply({ content: `Case #${caseId} not found.`, ephemeral: true });
+    return true;
+  }
+
+  if (action === "bypass_punishment") {
+    await interaction.deferReply({ ephemeral: true });
+    // Stamp the log embed as bypassed
+    const config = db.getGuildConfig(interaction.guild.id);
+    const freshRecord = db.getCase(interaction.guild.id, caseId) ?? record;
+    if (freshRecord.logChannelId && freshRecord.logMessageId) {
+      const logCh = await getTextChannel(interaction.guild, freshRecord.logChannelId);
+      const logMsg = await logCh?.messages.fetch(freshRecord.logMessageId).catch(() => null);
+      if (logMsg) {
+        const bypassedEmbed = buildCaseLogEmbed(freshRecord, { showPoints: config.pointsEnabled, punishmentBypassed: true });
+        const linkRows = caseLinkComponents(freshRecord.transcriptUrl, freshRecord.mediaLinks, freshRecord.id);
+        await logMsg.edit({ embeds: [bypassedEmbed], components: linkRows }).catch(() => null);
+      }
+    }
+    // Disable the fix buttons on the original message (the deferred reply will be the ephemeral response)
+    await interaction.message.edit({ components: [] }).catch(() => null);
+    await interaction.editReply(`✅ Case #${caseId} punishment bypassed.`);
+    return true;
+  }
+
+  if (action === "fix_discord_id") {
+    const modal = new ModalBuilder()
+      .setCustomId(`update_discord_id:${caseId}`)
+      .setTitle(`Update Discord ID — Case #${caseId}`)
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("discord_id")
+            .setLabel("New Discord User ID")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMinLength(17)
+            .setMaxLength(20)
+            .setPlaceholder("e.g. 123456789012345678")
+        )
+      );
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  if (action === "fix_roblox_id") {
+    const modal = new ModalBuilder()
+      .setCustomId(`update_roblox_id:${caseId}`)
+      .setTitle(`Update Roblox Username — Case #${caseId}`)
+      .addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(
+          new TextInputBuilder()
+            .setCustomId("roblox_username")
+            .setLabel("New Roblox Username")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(20)
+            .setPlaceholder("e.g. Builderman")
+        )
+      );
+    await interaction.showModal(modal);
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Handles update_discord_id:<caseId> and update_roblox_id:<caseId> modal submissions.
+ */
+export async function handleFixPunishmentModal(db: AppDatabase, interaction: ModalSubmitInteraction): Promise<boolean> {
+  const { customId } = interaction;
+  if (!customId.startsWith("update_discord_id:") && !customId.startsWith("update_roblox_id:")) return false;
+  if (!interaction.guild) return false;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  const parts = customId.split(":");
+  const action = parts[0];
+  const caseId = parseInt(parts[1], 10);
+  if (isNaN(caseId)) {
+    await interaction.editReply("Invalid case ID.");
+    return true;
+  }
+
+  const record = db.getCase(interaction.guild.id, caseId);
+  if (!record) {
+    await interaction.editReply(`Case #${caseId} not found.`);
+    return true;
+  }
+
+  const config = db.getGuildConfig(interaction.guild.id);
+
+  if (action === "update_discord_id") {
+    const newDiscordId = interaction.fields.getTextInputValue("discord_id").trim();
+    if (!/^\d{17,20}$/.test(newDiscordId)) {
+      await interaction.editReply("❌ Invalid Discord ID — must be 17-20 digits.");
+      return true;
+    }
+
+    // Fetch username for the new ID
+    let newUsername = `User (${newDiscordId})`;
+    try {
+      const user = await interaction.client.users.fetch(newDiscordId);
+      newUsername = userLabel(user);
+    } catch {
+      // couldn't fetch — use fallback
+    }
+
+    // Update the case
+    db.updateCaseDiscordId(interaction.guild.id, caseId, newDiscordId, newUsername);
+
+    // Update the log embed
+    const freshRecord = db.getCase(interaction.guild.id, caseId) ?? record;
+    if (freshRecord.logChannelId && freshRecord.logMessageId) {
+      const logCh = await getTextChannel(interaction.guild, freshRecord.logChannelId);
+      const logMsg = await logCh?.messages.fetch(freshRecord.logMessageId).catch(() => null);
+      if (logMsg) {
+        const updatedEmbed = buildCaseLogEmbed(freshRecord, { showPoints: config.pointsEnabled });
+        const linkRows = caseLinkComponents(freshRecord.transcriptUrl, freshRecord.mediaLinks, freshRecord.id);
+        const executeRow = buildExecutePunishmentButton(freshRecord, config);
+        await logMsg.edit({
+          embeds: [updatedEmbed],
+          components: [...(executeRow ? [executeRow] : []), ...linkRows]
+        }).catch(() => null);
+      }
+    }
+
+    // Disable the fix buttons on the original message
+    await interaction.message?.edit({ components: [] }).catch(() => null);
+
+    await interaction.editReply(
+      `✅ Case #${caseId} Discord ID updated to <@${newDiscordId}> (\`${newDiscordId}\`).\nClick **⚡ Execute Punishment** on the log to retry.`
+    );
+    return true;
+  }
+
+  if (action === "update_roblox_id") {
+    const newRobloxUsername = interaction.fields.getTextInputValue("roblox_username").trim();
+    if (!newRobloxUsername) {
+      await interaction.editReply("❌ Roblox username cannot be empty.");
+      return true;
+    }
+
+    // Update the case
+    db.updateCaseRobloxUsername(interaction.guild.id, caseId, newRobloxUsername);
+
+    // Update the log embed
+    const freshRecord = db.getCase(interaction.guild.id, caseId) ?? record;
+    if (freshRecord.logChannelId && freshRecord.logMessageId) {
+      const logCh = await getTextChannel(interaction.guild, freshRecord.logChannelId);
+      const logMsg = await logCh?.messages.fetch(freshRecord.logMessageId).catch(() => null);
+      if (logMsg) {
+        const updatedEmbed = buildCaseLogEmbed(freshRecord, { showPoints: config.pointsEnabled });
+        const linkRows = caseLinkComponents(freshRecord.transcriptUrl, freshRecord.mediaLinks, freshRecord.id);
+        await logMsg.edit({ embeds: [updatedEmbed], components: linkRows }).catch(() => null);
+      }
+    }
+
+    // Disable the fix buttons on the original message
+    await interaction.message?.edit({ components: [] }).catch(() => null);
+
+    // Re-trigger the ingame ban with the new Roblox username
+    await interaction.editReply(`✅ Case #${caseId} Roblox username updated to \`${newRobloxUsername}\`. Re-attempting ingame ban...`);
+    autoExecuteIngameBan(db, interaction.guild, caseId).catch((err) => {
+      console.error("[fix-roblox] Re-attempt ingame ban failed:", err);
+    });
+    return true;
+  }
+
+  return false;
 }
 
 async function maybePostStrikeAlert(db: AppDatabase, guild: Guild, record: ModerationCase) {

@@ -248,6 +248,11 @@ export function configSummaryEmbed(
       { name: "Point System", value: config.pointsEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "Jr. Approval Points", value: config.juniorApprovalPointsMilli === 0 ? "Disabled" : formatPoints(config.juniorApprovalPointsMilli), inline: true },
       { name: "Quota Enabled", value: config.quotaEnabled ? "Yes" : "No", inline: true },
+      { name: "Jail Role", value: config.jailedRoleId ? `<@&${config.jailedRoleId}>` : "Not set", inline: true },
+      { name: "Jail Category", value: config.jailCategoryId ? `<#${config.jailCategoryId}>` : "Not set", inline: true },
+      { name: "Jail Chat", value: config.jailChatId ? `<#${config.jailChatId}>` : "Not set", inline: true },
+      { name: "Jail Announcements", value: config.jailAnnouncementsId ? `<#${config.jailAnnouncementsId}>` : "Not set", inline: true },
+      { name: "Promote/Demote Roles", value: config.promoteDemoteRoleIds.length > 0 ? config.promoteDemoteRoleIds.map((id) => `<@&${id}>`).join(", ") : "None", inline: true },
       {
         name: "Auto-Punish",
         value: (() => {

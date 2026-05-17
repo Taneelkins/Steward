@@ -6,6 +6,7 @@ import {
   ButtonBuilder,
   ButtonInteraction,
   ButtonStyle,
+  CategoryChannel,
   ChannelType,
   ChatInputCommandInteraction,
   EmbedBuilder,
@@ -13,6 +14,8 @@ import {
   GuildMember,
   InteractionReplyOptions,
   ModalBuilder,
+  OverwriteType,
+  PermissionFlagsBits,
   Role,
   TextChannel,
   TextInputBuilder,
@@ -206,6 +209,9 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
       case "export":
         await handleExport(interaction, context, member);
         break;
+      case "setupsecondary":
+        await handleSetupSecondary(interaction, context, member);
+        break;
       case "ingameban":
         await handleIngameBan(interaction, context, member);
         break;
@@ -223,6 +229,18 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         break;
       case "loa":
         await handleLoa(interaction, context, member);
+        break;
+      case "promote":
+        await handlePromoteOrDemote(interaction, context, member, "promote");
+        break;
+      case "demote":
+        await handlePromoteOrDemote(interaction, context, member, "demote");
+        break;
+      case "fire":
+        await handleFire(interaction, context, member);
+        break;
+      case "assignroblox":
+        await handleAssignRoblox(interaction, context, member);
         break;
       default:
         await interaction.reply({ content: "Unknown command.", ephemeral: true });
@@ -496,14 +514,26 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     const linkedServer = interaction.options.getString("linked_server");
     const moderationInvite = interaction.options.getString("moderation_invite");
     const juniorApprovalPoints = interaction.options.getNumber("junior_approval_points");
+    const promoteDemoteRole = interaction.options.getRole("promote_demote_role") as Role | null;
+
+    let promoteDemoteRoleIdsJson: string | undefined;
+    if (promoteDemoteRole) {
+      const currentConfig = db.getGuildConfig(guild.id);
+      const existing = currentConfig.promoteDemoteRoleIds;
+      if (!existing.includes(promoteDemoteRole.id)) {
+        promoteDemoteRoleIdsJson = JSON.stringify([...existing, promoteDemoteRole.id]);
+      }
+    }
+
     db.updateGuildConfig(guild.id, {
       interactive_log_enabled: interactiveLog === null ? undefined : interactiveLog ? 1 : 0,
       approval_enabled: cmApproval === null ? undefined : cmApproval ? 1 : 0,
       ...(linkedServer !== null ? { linked_guild_id: linkedServer || null } : {}),
       ...(moderationInvite !== null ? { moderation_invite: moderationInvite || null } : {}),
-      ...(juniorApprovalPoints !== null ? { junior_approval_points_milli: Math.round(juniorApprovalPoints * 1000) } : {})
+      ...(juniorApprovalPoints !== null ? { junior_approval_points_milli: Math.round(juniorApprovalPoints * 1000) } : {}),
+      ...(promoteDemoteRoleIdsJson !== undefined ? { promote_demote_role_ids_json: promoteDemoteRoleIdsJson } : {})
     });
-    await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog, linkedServer, moderationInvite, juniorApprovalPoints });
+    await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog, linkedServer, moderationInvite, juniorApprovalPoints, promoteDemoteRoleId: promoteDemoteRole?.id });
     await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
     return;
   }
@@ -2199,6 +2229,446 @@ async function handleRefresh(interaction: ChatInputCommandInteraction, { db }: C
   await interaction.deferReply({ ephemeral: true });
   const count = await refreshApprovalChannel(db, guild);
   await interaction.editReply(`Refreshed approval channel: re-posted ${count} pending case${count !== 1 ? "s" : ""}.`);
+}
+
+// ── Promote / Demote ─────────────────────────────────────────────────────────
+
+/**
+ * The ordered tier ladder, lowest → highest.
+ * "staff" (base) is intentionally excluded — it's never swapped by promote/demote.
+ */
+const TIER_LADDER: StaffRoleKey[] = ["juniorMod", "mod", "seniorMod", "headMod", "communityManager"];
+
+const TIER_DISPLAY: Record<string, string> = {
+  juniorMod: "Junior Mod",
+  mod: "Mod",
+  seniorMod: "Senior Mod",
+  headMod: "Head Mod",
+  communityManager: "Community Manager",
+};
+
+/**
+ * Finds the configured staff role entry for a given tier key.
+ * Matches by DB key first, then falls back to canonical name matching.
+ */
+function findTierConfig(key: StaffRoleKey, staffRoles: Array<{ key: string; roleId: string; name: string }>) {
+  return staffRoles.find((r) => {
+    if (r.key === key) return true;
+    const n = r.name.toLowerCase().replace(/\s+/g, "-");
+    return (key === "juniorMod" && n === "junior-mod")
+      || (key === "mod" && (n === "mod" || n === "normal-mod"))
+      || (key === "seniorMod" && n === "senior-mod")
+      || (key === "headMod" && n === "head-mod")
+      || (key === "communityManager" && n === "community-manager");
+  }) ?? null;
+}
+
+/**
+ * Returns the highest tier key the member currently holds, or null if none.
+ * Checks by role ID then falls back to role name matching.
+ */
+function getMemberTierKey(
+  member: GuildMember,
+  staffRoles: Array<{ key: string; roleId: string; name: string }>
+): StaffRoleKey | null {
+  for (let i = TIER_LADDER.length - 1; i >= 0; i--) {
+    const key = TIER_LADDER[i];
+    const cfg = findTierConfig(key, staffRoles);
+    if (!cfg) continue;
+    if (member.roles.cache.has(cfg.roleId) ||
+        member.roles.cache.some((r) => r.name.toLowerCase() === cfg.name.toLowerCase())) {
+      return key;
+    }
+  }
+  return null;
+}
+
+/**
+ * Removes fromKey role and adds toKey role for a member in the given guild.
+ * Returns a status string describing what happened.
+ */
+async function applyTierChange(
+  guild: Guild,
+  userId: string,
+  fromKey: StaffRoleKey,
+  toKey: StaffRoleKey,
+  staffRoles: Array<{ key: string; roleId: string; name: string }>,
+  reason: string
+): Promise<"ok" | "no_member" | "role_missing"> {
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!member) return "no_member";
+
+  // Remove old tier role
+  const fromCfg = findTierConfig(fromKey, staffRoles);
+  if (fromCfg) {
+    const oldRole = guild.roles.cache.get(fromCfg.roleId)
+      ?? guild.roles.cache.find((r) => r.name.toLowerCase() === fromCfg.name.toLowerCase());
+    if (oldRole && member.roles.cache.has(oldRole.id)) {
+      await member.roles.remove(oldRole, reason).catch(() => null);
+    }
+  }
+
+  // Add new tier role
+  const toCfg = findTierConfig(toKey, staffRoles);
+  if (!toCfg) return "role_missing";
+  const newRole = guild.roles.cache.get(toCfg.roleId)
+    ?? guild.roles.cache.find((r) => r.name.toLowerCase() === toCfg.name.toLowerCase());
+  if (!newRole) return "role_missing";
+  if (!member.roles.cache.has(newRole.id)) {
+    await member.roles.add(newRole, reason).catch(() => null);
+  }
+
+  return "ok";
+}
+
+async function handlePromoteOrDemote(
+  interaction: ChatInputCommandInteraction,
+  context: CommandContext,
+  actor: GuildMember,
+  direction: "promote" | "demote"
+) {
+  const { db } = context;
+  const guild = interaction.guild!;
+  const guildConfig = db.getGuildConfig(guild.id);
+  const canAct = await isAdminMember(db, actor)
+    || guildConfig.promoteDemoteRoleIds.some((id) => actor.roles.cache.has(id));
+  if (!canAct) {
+    await interaction.reply({ content: "You don't have permission to use this command.", ephemeral: true });
+    return;
+  }
+  const targetUser = interaction.options.getUser("member", true);
+  const targetMember = await guild.members.fetch(targetUser.id).catch(() => null) as GuildMember | null;
+
+  if (!targetMember) {
+    await interaction.reply({ content: "That user isn't in this server.", ephemeral: true });
+    return;
+  }
+
+  // Prevent self-promotion/demotion
+  if (targetMember.id === actor.id) {
+    await interaction.reply({ content: "You can't promote or demote yourself.", ephemeral: true });
+    return;
+  }
+
+  const staffRoles = db.listStaffRoles(guild.id);
+  const currentKey = getMemberTierKey(targetMember, staffRoles);
+
+  if (!currentKey) {
+    await interaction.reply({
+      content: `${targetUser.tag} doesn't have a configured staff tier role in this server.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  const currentIdx = TIER_LADDER.indexOf(currentKey);
+  const newIdx = direction === "promote" ? currentIdx + 1 : currentIdx - 1;
+
+  if (newIdx < 0) {
+    await interaction.reply({
+      content: `${targetUser.tag} is already at the lowest tier (Junior Mod) and can't be demoted further.`,
+      ephemeral: true
+    });
+    return;
+  }
+  if (newIdx >= TIER_LADDER.length) {
+    await interaction.reply({
+      content: `${targetUser.tag} is already at the highest tier (Community Manager) and can't be promoted further.`,
+      ephemeral: true
+    });
+    return;
+  }
+
+  const newKey = TIER_LADDER[newIdx];
+  const verb = direction === "promote" ? "Promoted" : "Demoted";
+  const reason = `${verb} by ${actor.user.tag} (${actor.id}) via /${direction}`;
+
+  await interaction.deferReply();
+
+  // Apply in primary guild
+  const mainResult = await applyTierChange(guild, targetMember.id, currentKey, newKey, staffRoles, reason);
+
+  // Apply in linked guild if configured
+  let linkedInfo = "";
+  const config = db.getGuildConfig(guild.id);
+  if (config.linkedGuildId) {
+    const linkedGuild = interaction.client.guilds.cache.get(config.linkedGuildId)
+      ?? await interaction.client.guilds.fetch(config.linkedGuildId).catch(() => null);
+    if (linkedGuild) {
+      const linkedStaffRoles = db.listStaffRoles(linkedGuild.id);
+      const linkedResult = await applyTierChange(linkedGuild, targetMember.id, currentKey, newKey, linkedStaffRoles, reason);
+      linkedInfo = linkedResult === "ok"
+        ? `\n✅ Also applied in **${linkedGuild.name}**.`
+        : linkedResult === "no_member"
+          ? `\n⚠️ **${linkedGuild.name}**: member not found there (they may not be in that server).`
+          : `\n⚠️ **${linkedGuild.name}**: role not configured — set it up with \`/config roles\`.`;
+    } else {
+      linkedInfo = "\n⚠️ Could not fetch the linked server.";
+    }
+  }
+
+  const fromLabel = TIER_DISPLAY[currentKey];
+  const toLabel = TIER_DISPLAY[newKey];
+  const arrow = direction === "promote" ? "→" : "→";
+
+  if (mainResult === "ok") {
+    await interaction.editReply({
+      content: `${direction === "promote" ? "⬆️" : "⬇️"} **${verb}** <@${targetUser.id}>\n${fromLabel} ${arrow} **${toLabel}**${linkedInfo}`
+    });
+  } else if (mainResult === "role_missing") {
+    await interaction.editReply({
+      content: `❌ The **${toLabel}** role isn't configured for this server. Set it up with \`/config roles\`.`
+    });
+  } else {
+    await interaction.editReply({ content: "❌ Could not fetch that member." });
+  }
+}
+
+// ── Fire ─────────────────────────────────────────────────────────────────────
+
+/** Remove every configured staff role from a member in the given guild. */
+async function stripAllStaffRoles(
+  guild: Guild,
+  userId: string,
+  staffRoles: Array<{ key: string; roleId: string; name: string }>,
+  reason: string
+): Promise<{ removed: string[]; notInServer: boolean }> {
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!member) return { removed: [], notInServer: true };
+
+  const removed: string[] = [];
+  for (const cfg of staffRoles) {
+    const role = guild.roles.cache.get(cfg.roleId)
+      ?? guild.roles.cache.find((r) => r.name.toLowerCase() === cfg.name.toLowerCase());
+    if (role && member.roles.cache.has(role.id)) {
+      await member.roles.remove(role, reason).catch(() => null);
+      removed.push(cfg.name);
+    }
+  }
+  return { removed, notInServer: false };
+}
+
+async function handleFire(
+  interaction: ChatInputCommandInteraction,
+  context: CommandContext,
+  actor: GuildMember
+) {
+  await requireAdmin(context.db, actor);
+
+  const { db } = context;
+  const guild = interaction.guild!;
+  const targetUser = interaction.options.getUser("member", true);
+  const reason = interaction.options.getString("reason") ?? "No reason provided.";
+
+  if (targetUser.id === actor.id) {
+    await interaction.reply({ content: "You can't fire yourself.", ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply();
+
+  const fireReason = `Fired by ${actor.user.tag} (${actor.id}): ${reason}`;
+  const config = db.getGuildConfig(guild.id);
+  const staffRoles = db.listStaffRoles(guild.id);
+
+  // Strip all staff roles in the primary guild
+  const { removed: mainRemoved, notInServer: mainMissing } = await stripAllStaffRoles(
+    guild, targetUser.id, staffRoles, fireReason
+  );
+
+  // Mark inactive in staff_members for the primary guild
+  db.deactivateStaffMember(guild.id, targetUser.id);
+
+  // Apply in linked guild if configured
+  let linkedInfo = "";
+  if (config.linkedGuildId) {
+    const linkedGuild = interaction.client.guilds.cache.get(config.linkedGuildId)
+      ?? await interaction.client.guilds.fetch(config.linkedGuildId).catch(() => null) as Guild | null;
+    if (linkedGuild) {
+      const linkedStaffRoles = db.listStaffRoles(linkedGuild.id);
+      const { removed: linkedRemoved, notInServer: linkedMissing } = await stripAllStaffRoles(
+        linkedGuild, targetUser.id, linkedStaffRoles, fireReason
+      );
+      db.deactivateStaffMember(linkedGuild.id, targetUser.id);
+      linkedInfo = linkedMissing
+        ? `\n⚠️ **${linkedGuild.name}**: member not found there.`
+        : linkedRemoved.length > 0
+          ? `\n✅ **${linkedGuild.name}**: removed ${linkedRemoved.join(", ")}.`
+          : `\n✅ **${linkedGuild.name}**: no staff roles found to remove.`;
+    } else {
+      linkedInfo = "\n⚠️ Could not fetch the linked server.";
+    }
+  }
+
+  const mainLine = mainMissing
+    ? "Member is not in this server."
+    : mainRemoved.length > 0
+      ? `Removed: ${mainRemoved.join(", ")}`
+      : "No staff roles found to remove.";
+
+  await interaction.editReply({
+    content: `🔴 **Fired** <@${targetUser.id}>\n**Reason:** ${reason}\n**This server:** ${mainLine}${linkedInfo}`
+  });
+}
+
+// ── Setup Secondary (Jail Infrastructure) ─────────────────────────────────────
+
+async function handleSetupSecondary(
+  interaction: ChatInputCommandInteraction,
+  context: CommandContext,
+  _member: GuildMember
+) {
+  await interaction.deferReply({ ephemeral: true });
+  const { db } = context;
+  const guild = interaction.guild!;
+  const lines: string[] = [];
+
+  // 1. Create/find the "Jailed" role
+  let jailedRole = guild.roles.cache.find((r) => r.name === "Jailed")
+    ?? await guild.roles.create({ name: "Jailed", permissions: [], reason: "Jail setup" });
+  lines.push(`Role: ${jailedRole.name} (${jailedRole.id})`);
+
+  // 2. Create/find the "Jailed" category with permission overwrites
+  let jailCategory = guild.channels.cache.find(
+    (c) => c.type === ChannelType.GuildCategory && c.name === "Jailed"
+  ) as CategoryChannel | undefined;
+
+  const categoryPermissions = [
+    { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+    { id: jailedRole.id, allow: [PermissionFlagsBits.ViewChannel] }
+  ];
+
+  if (!jailCategory) {
+    jailCategory = await guild.channels.create({
+      name: "Jailed",
+      type: ChannelType.GuildCategory,
+      permissionOverwrites: categoryPermissions,
+      reason: "Jail setup"
+    }) as CategoryChannel;
+    lines.push(`Created category: Jailed (${jailCategory.id})`);
+  } else {
+    await jailCategory.edit({ permissionOverwrites: categoryPermissions, reason: "Jail setup update" });
+    lines.push(`Updated category: Jailed (${jailCategory.id})`);
+  }
+
+  // 3. Create/find #jailed-chat
+  let jailChat = jailCategory.children.cache.find((c) => c.name === "jailed-chat") as TextChannel | undefined;
+  if (!jailChat) {
+    jailChat = await guild.channels.create({
+      name: "jailed-chat",
+      type: ChannelType.GuildText,
+      parent: jailCategory.id,
+      rateLimitPerUser: 21600,
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: jailedRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }
+      ],
+      reason: "Jail setup"
+    }) as TextChannel;
+    lines.push(`Created channel: #jailed-chat (${jailChat.id})`);
+  } else {
+    await jailChat.edit({
+      parent: jailCategory.id,
+      rateLimitPerUser: 21600,
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: jailedRole.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages] }
+      ],
+      reason: "Jail setup update"
+    });
+    lines.push(`Updated channel: #jailed-chat (${jailChat.id})`);
+  }
+
+  // 4. Create/find #jail-announcements
+  let jailAnnouncements = jailCategory.children.cache.find((c) => c.name === "jail-announcements") as TextChannel | undefined;
+  if (!jailAnnouncements) {
+    jailAnnouncements = await guild.channels.create({
+      name: "jail-announcements",
+      type: ChannelType.GuildText,
+      parent: jailCategory.id,
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: jailedRole.id, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] }
+      ],
+      reason: "Jail setup"
+    }) as TextChannel;
+    lines.push(`Created channel: #jail-announcements (${jailAnnouncements.id})`);
+  } else {
+    await jailAnnouncements.edit({
+      parent: jailCategory.id,
+      permissionOverwrites: [
+        { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: jailedRole.id, allow: [PermissionFlagsBits.ViewChannel], deny: [PermissionFlagsBits.SendMessages] }
+      ],
+      reason: "Jail setup update"
+    });
+    lines.push(`Updated channel: #jail-announcements (${jailAnnouncements.id})`);
+  }
+
+  // 5. Add deny-ViewChannel overwrite for the Jailed role to all OTHER categories
+  const otherCategories = guild.channels.cache.filter(
+    (c) => c.type === ChannelType.GuildCategory && c.id !== jailCategory!.id
+  ) as Map<string, CategoryChannel>;
+
+  for (const category of otherCategories.values()) {
+    await category.permissionOverwrites.create(
+      jailedRole,
+      { ViewChannel: false },
+      { reason: "Jail setup: deny jailed role view" }
+    ).catch(() => null);
+  }
+
+  // 6. Add deny-ViewChannel overwrite for Jailed role on top-level channels (no parent)
+  const topLevelChannels = guild.channels.cache.filter(
+    (c) => !c.parentId && c.type !== ChannelType.GuildCategory
+  );
+  for (const channel of topLevelChannels.values()) {
+    if ("permissionOverwrites" in channel) {
+      await (channel as TextChannel).permissionOverwrites.create(
+        jailedRole,
+        { ViewChannel: false },
+        { reason: "Jail setup: deny jailed role view" }
+      ).catch(() => null);
+    }
+  }
+
+  lines.push(`Applied deny-ViewChannel to ${otherCategories.size} other categories and ${topLevelChannels.size} top-level channels.`);
+
+  // 7. Save to guild config
+  db.updateGuildConfig(guild.id, {
+    jailed_role_id: jailedRole.id,
+    jail_category_id: jailCategory.id,
+    jail_chat_id: jailChat.id,
+    jail_announcements_id: jailAnnouncements.id
+  });
+
+  await interaction.editReply({ content: `**Jail infrastructure set up:**\n${lines.map((l) => `• ${l}`).join("\n")}` });
+}
+
+// ── Assign Roblox ─────────────────────────────────────────────────────────────
+
+async function handleAssignRoblox(
+  interaction: ChatInputCommandInteraction,
+  context: CommandContext,
+  actor: GuildMember
+) {
+  await requireAdmin(context.db, actor);
+
+  const { db } = context;
+  const targetUser = interaction.options.getUser("member", true);
+  const robloxUsername = interaction.options.getString("roblox_username", true).trim();
+
+  if (!robloxUsername) {
+    await interaction.reply({ content: "Roblox username cannot be empty.", ephemeral: true });
+    return;
+  }
+
+  db.setStaffRoblox(targetUser.id, robloxUsername, actor.id);
+
+  await interaction.reply({
+    content: `✅ Linked **${robloxUsername}** (Roblox) to <@${targetUser.id}>.\nThis will be used for group rank changes when that feature is added.`,
+    ephemeral: false
+  });
 }
 
 async function replyError(interaction: ChatInputCommandInteraction, error: unknown) {

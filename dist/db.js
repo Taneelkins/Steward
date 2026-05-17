@@ -87,6 +87,12 @@ export class AppDatabase {
     updateCaseLogMessage(guildId, caseId, channelId, messageId) {
         this.run("UPDATE moderation_cases SET log_channel_id = ?, log_message_id = ?, updated_at = ? WHERE guild_id = ? AND id = ?", channelId, messageId, nowIso(), guildId, caseId);
     }
+    updateCaseDiscordId(guildId, caseId, discordId, discordUsername) {
+        this.run("UPDATE moderation_cases SET discord_id = ?, discord_username = ?, updated_at = ? WHERE guild_id = ? AND id = ?", discordId, discordUsername, nowIso(), guildId, caseId);
+    }
+    updateCaseRobloxUsername(guildId, caseId, robloxUsername) {
+        this.run("UPDATE moderation_cases SET roblox_username = ?, updated_at = ? WHERE guild_id = ? AND id = ?", robloxUsername, nowIso(), guildId, caseId);
+    }
     schedulePersistentTimeout(values) {
         this.run("DELETE FROM persistent_timeouts WHERE guild_id = ? AND linked_guild_id = ? AND discord_target_id = ?", values.guildId, values.linkedGuildId, values.discordTargetId);
         this.run("INSERT INTO persistent_timeouts (guild_id, linked_guild_id, discord_target_id, case_id, renew_after, created_at) VALUES (?, ?, ?, ?, ?, ?)", values.guildId, values.linkedGuildId, values.discordTargetId, values.caseId ?? null, values.renewAfter, nowIso());
@@ -247,6 +253,24 @@ export class AppDatabase {
         this.ensureGuild(guildId);
         return this.all("SELECT * FROM staff_members WHERE guild_id = ? AND active = 1 ORDER BY registered_at ASC", guildId).map(mapStaffMember);
     }
+    deactivateStaffMember(guildId, userId) {
+        this.run("UPDATE staff_members SET active = 0 WHERE guild_id = ? AND user_id = ?", guildId, userId);
+    }
+    setStaffRoblox(userId, robloxUsername, setBy) {
+        const now = nowIso();
+        this.run(`INSERT INTO staff_roblox_profiles (user_id, roblox_username, roblox_id, set_by, created_at, updated_at)
+       VALUES (?, ?, NULL, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         roblox_username = excluded.roblox_username,
+         set_by = excluded.set_by,
+         updated_at = excluded.updated_at`, userId, robloxUsername, setBy, now, now);
+    }
+    getStaffRoblox(userId) {
+        const row = this.get("SELECT * FROM staff_roblox_profiles WHERE user_id = ?", userId);
+        if (!row)
+            return null;
+        return { userId: row.user_id, robloxUsername: row.roblox_username, robloxId: row.roblox_id, setBy: row.set_by, updatedAt: row.updated_at };
+    }
     getAction(guildId, name) {
         this.ensureGuild(guildId);
         const row = this.get("SELECT * FROM action_presets WHERE guild_id = ? AND name = ?", guildId, name.toLowerCase());
@@ -320,6 +344,22 @@ export class AppDatabase {
         this.run(`UPDATE evidence_archives
        SET archived_message_url = ?
        WHERE guild_id = ? AND source_attachment_key = ?`, archivedMessageUrl, guildId, sourceAttachmentKey);
+    }
+    scheduleUnjail(values) {
+        this.run("DELETE FROM jailed_members WHERE linked_guild_id = ? AND discord_target_id = ?", values.linkedGuildId, values.discordTargetId);
+        this.run("INSERT INTO jailed_members (guild_id, linked_guild_id, discord_target_id, case_id, saved_role_ids_json, jailed_at, unjail_at) VALUES (?, ?, ?, ?, ?, ?, ?)", values.guildId, values.linkedGuildId, values.discordTargetId, values.caseId ?? null, JSON.stringify(values.savedRoleIds), nowIso(), values.unjailAt ?? null);
+    }
+    getDueScheduledUnjails() {
+        return this.all("SELECT * FROM jailed_members WHERE unjail_at IS NOT NULL AND unjail_at <= ?", nowIso());
+    }
+    deleteScheduledUnjail(id) {
+        this.run("DELETE FROM jailed_members WHERE id = ?", id);
+    }
+    deleteUnjailForTarget(linkedGuildId, discordTargetId) {
+        this.run("DELETE FROM jailed_members WHERE linked_guild_id = ? AND discord_target_id = ?", linkedGuildId, discordTargetId);
+    }
+    getJailedMember(linkedGuildId, discordTargetId) {
+        return this.get("SELECT * FROM jailed_members WHERE linked_guild_id = ? AND discord_target_id = ?", linkedGuildId, discordTargetId) ?? null;
     }
     deletePendingEvidenceArchive(guildId, sourceAttachmentKey) {
         this.run(`DELETE FROM evidence_archives
@@ -648,6 +688,27 @@ export class AppDatabase {
       );
 
       CREATE INDEX IF NOT EXISTS idx_roblox_games_guild ON roblox_games (guild_id);
+
+      CREATE TABLE IF NOT EXISTS staff_roblox_profiles (
+        user_id TEXT NOT NULL PRIMARY KEY,
+        roblox_username TEXT,
+        roblox_id TEXT,
+        set_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS jailed_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id TEXT NOT NULL,
+        linked_guild_id TEXT NOT NULL,
+        discord_target_id TEXT NOT NULL,
+        case_id INTEGER,
+        saved_role_ids_json TEXT NOT NULL,
+        jailed_at TEXT NOT NULL,
+        unjail_at TEXT,
+        UNIQUE(linked_guild_id, discord_target_id)
+      );
     `);
         this.ensureColumn("guild_configs", "staff_registration_channel_id", "TEXT");
         this.ensureColumn("guild_configs", "registration_role_id", "TEXT");
@@ -697,6 +758,11 @@ export class AppDatabase {
         this.ensureColumn("guild_configs", "junior_approval_points_milli", "INTEGER NOT NULL DEFAULT 500");
         this.ensureColumn("evidence_archives", "source_attachment_key", "TEXT");
         this.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_archives_source_attachment_key ON evidence_archives(guild_id, source_attachment_key);");
+        this.ensureColumn("guild_configs", "jailed_role_id", "TEXT");
+        this.ensureColumn("guild_configs", "jail_category_id", "TEXT");
+        this.ensureColumn("guild_configs", "jail_chat_id", "TEXT");
+        this.ensureColumn("guild_configs", "jail_announcements_id", "TEXT");
+        this.ensureColumn("guild_configs", "promote_demote_role_ids_json", "TEXT");
     }
     ensureColumn(table, column, definition) {
         const columns = this.all(`PRAGMA table_info(${table})`);
@@ -756,6 +822,11 @@ function mapGuildConfig(row) {
         loaLogChannelId: row.loa_log_channel_id,
         shoutsChannelId: row.shouts_channel_id,
         juniorApprovalPointsMilli: row.junior_approval_points_milli ?? 500,
+        jailedRoleId: row.jailed_role_id ?? null,
+        jailCategoryId: row.jail_category_id ?? null,
+        jailChatId: row.jail_chat_id ?? null,
+        jailAnnouncementsId: row.jail_announcements_id ?? null,
+        promoteDemoteRoleIds: parseStringList(row.promote_demote_role_ids_json),
         createdAt: row.created_at,
         updatedAt: row.updated_at
     };
