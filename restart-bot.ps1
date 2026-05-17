@@ -41,13 +41,19 @@ if (Test-Path $pm2BotPidFile) {
 
 Start-Sleep -Seconds 2
 
+# ── Write update notes to a file so going-down.js can read them intact ────────
+$pendingNotesFile = "$dataDir\pending-update-notes.txt"
+if ($UpdateNotes -ne "") {
+    Set-Content -Path $pendingNotesFile -Value $UpdateNotes -Encoding utf8
+} elseif (Test-Path $pendingNotesFile) {
+    Remove-Item $pendingNotesFile -Force -ErrorAction SilentlyContinue
+}
+
 # ── Post "going down" embed via Node.js (writes restart-signal.json) ──────────
 Write-Output "Posting going-down announcement..."
-$goingDownArgs = @("dist/going-down.js")
-if ($UpdateNotes -ne "") { $goingDownArgs += $UpdateNotes }
 $goingDownProc = Start-Process `
     -FilePath $node `
-    -ArgumentList $goingDownArgs `
+    -ArgumentList @("dist/going-down.js") `
     -WorkingDirectory $botDir `
     -WindowStyle Hidden `
     -Wait `

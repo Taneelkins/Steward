@@ -16,7 +16,18 @@ const db = new AppDatabase(env.databasePath, env.defaultTimezone);
 const dataDir = path.dirname(env.databasePath);
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-const updateNotes = process.argv[2] || undefined;
+// Read update notes from a temp file written by restart-bot.ps1.
+// Using a file instead of argv avoids multi-line strings being truncated
+// when PowerShell passes them to Node via Start-Process -ArgumentList.
+const pendingNotesPath = path.join(dataDir, "pending-update-notes.txt");
+let updateNotes: string | undefined;
+if (fs.existsSync(pendingNotesPath)) {
+  const raw = fs.readFileSync(pendingNotesPath, "utf8").trim();
+  if (raw) updateNotes = raw;
+  fs.unlinkSync(pendingNotesPath);
+} else {
+  updateNotes = process.argv[2] || undefined;
+}
 
 client.once(Events.ClientReady, async (readyClient) => {
   await postGoingDown(db, readyClient, dataDir, updateNotes);
