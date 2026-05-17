@@ -2257,6 +2257,7 @@ async function handleRefresh(interaction: ChatInputCommandInteraction, { db }: C
 const TIER_LADDER: StaffRoleKey[] = ["juniorMod", "mod", "seniorMod", "headMod", "communityManager"];
 
 const TIER_DISPLAY: Record<string, string> = {
+  staff: "Staff",
   juniorMod: "Junior Mod",
   mod: "Mod",
   seniorMod: "Senior Mod",
@@ -2556,6 +2557,7 @@ async function handleSetupSecondary(
     };
 
     const tierOptions: Array<{ key: StaffRoleKey; option: string }> = [
+      { key: "staff",            option: "staff_role" },
       { key: "juniorMod",        option: "junior_mod" },
       { key: "mod",              option: "mod" },
       { key: "seniorMod",        option: "senior_mod" },

@@ -151,6 +151,7 @@ export function buildCommands(options = {}) {
             .addSubcommand((sub) => sub
             .setName("roles")
             .setDescription("Set which roles correspond to each staff tier in this server (used by /promote and /demote).")
+            .addRoleOption((o) => o.setName("staff_role").setDescription("Base Staff role."))
             .addRoleOption((o) => o.setName("junior_mod").setDescription("Junior Mod role."))
             .addRoleOption((o) => o.setName("mod").setDescription("Mod role."))
             .addRoleOption((o) => o.setName("senior_mod").setDescription("Senior Mod role."))
@@ -176,6 +177,7 @@ export function buildSecondaryCommands() {
             .addSubcommand((sub) => sub
             .setName("roles")
             .setDescription("Set which roles correspond to each staff tier in this server.")
+            .addRoleOption((o) => o.setName("staff_role").setDescription("Base Staff role."))
             .addRoleOption((o) => o.setName("junior_mod").setDescription("Junior Mod role."))
             .addRoleOption((o) => o.setName("mod").setDescription("Mod role."))
             .addRoleOption((o) => o.setName("senior_mod").setDescription("Senior Mod role."))

@@ -1872,6 +1872,7 @@ async function handleRefresh(interaction, { db }, member) {
  */
 const TIER_LADDER = ["juniorMod", "mod", "seniorMod", "headMod", "communityManager"];
 const TIER_DISPLAY = {
+    staff: "Staff",
     juniorMod: "Junior Mod",
     mod: "Mod",
     seniorMod: "Senior Mod",
@@ -2111,6 +2112,7 @@ async function handleSetupSecondary(interaction, context, _member) {
             communityManager: ["community manager", "cm", "community mod", "community moderator"],
         };
         const tierOptions = [
+            { key: "staff", option: "staff_role" },
             { key: "juniorMod", option: "junior_mod" },
             { key: "mod", option: "mod" },
             { key: "seniorMod", option: "senior_mod" },
