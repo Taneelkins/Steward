@@ -110,6 +110,52 @@ export function buildCommands(options: CommandBuildOptions = {}) {
 
     loaCommand(),
 
+    // ── Action commands (available in both main and secondary servers) ──────
+    // In secondary servers these cross to the linked main server's comms channel.
+    // In main servers the incomplete log goes to their own crossservercomms channel.
+    new SlashCommandBuilder()
+      .setName("jail")
+      .setDescription("Jail a user and create an incomplete Discord Mute log in the crossserver comms channel.")
+      .addUserOption((o) => o.setName("user").setDescription("User to jail.").setRequired(true))
+      .addStringOption((o) => o.setName("duration").setDescription("Duration, e.g. 7d, 24h, 30m. Omit for indefinite."))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(juniorDefault),
+
+    new SlashCommandBuilder()
+      .setName("unjail")
+      .setDescription("Unjail a user and create an incomplete mute appeal log in the crossserver comms channel.")
+      .addUserOption((o) => o.setName("user").setDescription("User to unjail.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("ban")
+      .setDescription("Ban a user and create an incomplete Discord Ban log in the crossserver comms channel.")
+      .addUserOption((o) => o.setName("user").setDescription("User to ban.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("unban")
+      .setDescription("Unban a user and create an incomplete ban appeal log in the crossserver comms channel.")
+      .addStringOption((o) => o.setName("user_id").setDescription("Discord user ID to unban.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("kick")
+      .setDescription("Kick a user and create an incomplete Discord Kick log in the crossserver comms channel.")
+      .addUserOption((o) => o.setName("user").setDescription("User to kick.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(normalDefault),
+
+    new SlashCommandBuilder()
+      .setName("warn")
+      .setDescription("Warn a user and create an incomplete Discord Warn log in the crossserver comms channel.")
+      .addUserOption((o) => o.setName("user").setDescription("User to warn.").setRequired(true))
+      .addStringOption((o) => o.setName("reason").setDescription("Reason (pre-fills the log)."))
+      .setDefaultMemberPermissions(juniorDefault),
+
     new SlashCommandBuilder()
       .setName("lookup")
       .setDescription("Search all case logs by target identity.")

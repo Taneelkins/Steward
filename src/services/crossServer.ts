@@ -98,8 +98,8 @@ async function postPendingLog(
   modId: string,
   secondaryGuildName: string
 ) {
-  const mainGuildId = db.findMainGuildForSecondary(secondaryGuildId);
-  if (!mainGuildId) return;
+  // If this guild has a main server linked, post there. Otherwise it IS the main server — post here.
+  const mainGuildId = db.findMainGuildForSecondary(secondaryGuildId) ?? secondaryGuildId;
 
   const mainConfig = db.getGuildConfig(mainGuildId);
   const meta = ACTION_META[subtype];
