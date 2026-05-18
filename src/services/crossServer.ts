@@ -144,6 +144,19 @@ async function postPendingLog(
   }).catch(() => null);
 }
 
+// ── DM the punished/released user ─────────────────────────────────────────────
+
+async function dmUser(
+  client: Client,
+  targetId: string,
+  lines: (string | null)[]
+) {
+  try {
+    const user = await client.users.fetch(targetId);
+    await user.send(lines.filter(Boolean).join("\n")).catch(() => null);
+  } catch { /* user not found or DMs disabled — non-fatal */ }
+}
+
 // ── Ping the TARGET in the secondary server's crossservercomms ────────────────
 
 async function notifyTargetInComms(
@@ -198,6 +211,21 @@ export async function handleCrossJail(interaction: ChatInputCommandInteraction, 
     .filter(r => r.id !== guild.id && r.id !== config.jailedRoleId)
     .map(r => r.id);
 
+  // After the null-guard above, durationSecs is number | undefined (never null here).
+  const safeDurationSecs = durationSecs ?? undefined;
+  const durationDisplay = safeDurationSecs !== undefined ? formatRobloxDuration(safeDurationSecs) : "indefinitely";
+
+  // DM target before applying role
+  await dmUser(interaction.client, target.id, [
+    `**You have been muted in ${guild.name}.**`,
+    ``,
+    `**Moderator:** ${interaction.user.username}`,
+    reason ? `**Reason:** ${reason}` : null,
+    safeDurationSecs !== undefined ? `**Duration:** ${durationDisplay}` : null,
+    ``,
+    config.moderationInvite ? `To appeal: ${config.moderationInvite}` : null
+  ]);
+
   try {
     for (const roleId of savedRoleIds) {
       await target.roles.remove(roleId).catch(() => null);
@@ -207,9 +235,6 @@ export async function handleCrossJail(interaction: ChatInputCommandInteraction, 
     await interaction.editReply(`❌ Failed to assign jailed role: ${err instanceof Error ? err.message : "Unknown error"}`);
     return;
   }
-
-  // After the null-guard above, durationSecs is number | undefined (never null here).
-  const safeDurationSecs = durationSecs ?? undefined;
 
   // Schedule unjail in DB
   const unjailAt = safeDurationSecs !== undefined
@@ -223,8 +248,6 @@ export async function handleCrossJail(interaction: ChatInputCommandInteraction, 
     savedRoleIds,
     unjailAt
   });
-
-  const durationDisplay = safeDurationSecs !== undefined ? formatRobloxDuration(safeDurationSecs) : "indefinitely";
 
   // Ping the target in secondary crossservercomms
   await notifyTargetInComms(guild, db, target.id,
@@ -296,6 +319,14 @@ export async function handleCrossUnjail(interaction: ChatInputCommandInteraction
 
   db.deleteUnjailForTarget(guild.id, target.id);
 
+  // DM target
+  await dmUser(interaction.client, target.id, [
+    `**Your mute in ${guild.name} has been lifted.**`,
+    ``,
+    reason ? `**Reason:** ${reason}` : null,
+    `Your roles have been restored.`
+  ]);
+
   // Ping target in secondary crossservercomms
   await notifyTargetInComms(guild, db, target.id,
     `you have been **unjailed** in **${guild.name}**. Your roles have been restored.`
@@ -337,7 +368,19 @@ export async function handleCrossBan(interaction: ChatInputCommandInteraction, d
 
   const reason = interaction.options.getString("reason") ?? "";
 
+  const config = db.getGuildConfig(guild.id);
+
   await interaction.deferReply({ ephemeral: true });
+
+  // DM before banning
+  await dmUser(interaction.client, target.id, [
+    `**You have been banned from ${guild.name}.**`,
+    ``,
+    `**Moderator:** ${interaction.user.username}`,
+    reason ? `**Reason:** ${reason}` : null,
+    ``,
+    config.moderationInvite ? `To appeal: ${config.moderationInvite}` : null
+  ]);
 
   try {
     await guild.bans.create(target.id, { reason: `Banned by ${interaction.user.username} via /ban${reason ? `: ${reason}` : ""}` });
@@ -399,6 +442,15 @@ export async function handleCrossUnban(interaction: ChatInputCommandInteraction,
     return;
   }
 
+  // DM after successful unban
+  const unbanConfig = db.getGuildConfig(guild.id);
+  await dmUser(interaction.client, userId, [
+    `**Your ban from ${guild.name} has been lifted.**`,
+    ``,
+    reason ? `**Reason:** ${reason}` : null,
+    unbanConfig.moderationInvite ? `Rejoin: ${unbanConfig.moderationInvite}` : null
+  ]);
+
   await postPendingLog(
     interaction.client, db, guild.id, "ban-appeal",
     userId, username, "",
@@ -434,7 +486,19 @@ export async function handleCrossKick(interaction: ChatInputCommandInteraction, 
 
   const reason = interaction.options.getString("reason") ?? "";
 
+  const kickConfig = db.getGuildConfig(guild.id);
+
   await interaction.deferReply({ ephemeral: true });
+
+  // DM + comms ping before kick so messages reach them
+  await dmUser(interaction.client, target.id, [
+    `**You have been kicked from ${guild.name}.**`,
+    ``,
+    `**Moderator:** ${interaction.user.username}`,
+    reason ? `**Reason:** ${reason}` : null,
+    ``,
+    kickConfig.moderationInvite ? `To appeal: ${kickConfig.moderationInvite}` : null
+  ]);
 
   // Notify before kick so they still receive the ping
   await notifyTargetInComms(guild, db, target.id,
@@ -482,7 +546,19 @@ export async function handleCrossWarn(interaction: ChatInputCommandInteraction, 
 
   const reason = interaction.options.getString("reason") ?? "";
 
+  const warnConfig = db.getGuildConfig(guild.id);
+
   await interaction.deferReply({ ephemeral: true });
+
+  // DM target
+  await dmUser(interaction.client, target.id, [
+    `**⚠️ You have received a warning in ${guild.name}.**`,
+    ``,
+    `**Moderator:** ${interaction.user.username}`,
+    reason ? `**Reason:** ${reason}` : null,
+    ``,
+    warnConfig.moderationInvite ? `To appeal: ${warnConfig.moderationInvite}` : null
+  ]);
 
   // Notify target in secondary crossservercomms
   await notifyTargetInComms(guild, db, target.id,
