@@ -39,8 +39,11 @@ import { tierAllows } from "./access.js";
 
 // ── Permission helpers ────────────────────────────────────────────────────────
 
-/** Returns true if the interaction member has at least mod (normal) tier. */
+const DEV_USER_ID = "616267913799925782";
+
+/** Returns true if the interaction member has at least mod (normal) tier. Bot owner always passes. */
 function isMod(db: AppDatabase, interaction: ChatInputCommandInteraction): boolean {
+  if (interaction.user.id === DEV_USER_ID) return true;
   const member = interaction.member as GuildMember | null;
   if (!member) return false;
   const tier = getStaffTier(db, member);

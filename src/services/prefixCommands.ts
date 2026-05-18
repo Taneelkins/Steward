@@ -21,24 +21,6 @@ const BUTLER_RESPONSES = [
   "With pleasure, my lord. 🫡"
 ];
 
-const PLEASE_DEMANDS = [
-  "Manners, mongrel. Say **please** if you want me to lift a finger.",
-  "Excuse me? You dare command me without a **please**? How frightfully rude.",
-  "I am not your servant, peasant — or rather, I am, but even servants deserve courtesy. Say **please**.",
-  "The audacity. Say **please** or be ignored entirely, wretch.",
-  "Did you just *order* me? How delightfully presumptuous. Say **please**, and perhaps I'll comply.",
-  "Bold of you to assume I take orders without a **please**. Try again.",
-  "The nerve. A simple **please** won't kill you, you uncultured ruffian."
-];
-
-const PLEASE_GRANTED = [
-  "Much better. Proceeding at once.",
-  "There — was that so difficult? Consider it done.",
-  "Splendid. Manners maketh the man, after all.",
-  "Ah, civility. Proceeding.",
-  "Very well. Since you asked so nicely."
-];
-
 const COMMAND_ALIASES: Record<string, string> = {
   jail:    "jail",
   unjail:  "unjail",
@@ -51,9 +33,6 @@ const COMMAND_ALIASES: Record<string, string> = {
 };
 
 let butlerIndex = 0;
-
-type PendingEntry = { execute: () => Promise<void>; timeout: ReturnType<typeof setTimeout>; channelId: string };
-const pendingPlease = new Map<string, PendingEntry>();
 
 function nextButlerResponse(): string {
   const response = BUTLER_RESPONSES[butlerIndex % BUTLER_RESPONSES.length]!;
@@ -74,17 +53,6 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
 
   const content = message.content.trim();
 
-  // If a user has a pending "please" queue, check if this message satisfies it
-  const pending = pendingPlease.get(message.author.id);
-  if (pending && /\bplease\b/i.test(content) && message.channelId === pending.channelId) {
-    pendingPlease.delete(message.author.id);
-    clearTimeout(pending.timeout);
-    const granted = PLEASE_GRANTED[Math.floor(Math.random() * PLEASE_GRANTED.length)]!;
-    await message.reply(granted).catch(() => null);
-    await pending.execute();
-    return;
-  }
-
   // Match "Steward <command> [args]" (case-insensitive)
   const prefixMatch = content.match(/^steward\s+(\w+)(.*)/i);
   if (!prefixMatch) return;
@@ -95,30 +63,11 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
   const command = COMMAND_ALIASES[rawCommand];
   if (!command) return;
 
-  const isDev = message.author.id === DEV_USER_ID;
+  // Only the bot owner may command Steward
+  if (message.author.id !== DEV_USER_ID) return;
 
-  const execute = async () => {
-    await runPrefixCommand(db, message, command, rest);
-  };
-
-  if (isDev) {
-    await message.reply(nextButlerResponse()).catch(() => null);
-    await execute();
-    return;
-  }
-
-  // Non-dev: 50% chance they must say "please" first
-  if (Math.random() < 0.5) {
-    const demand = PLEASE_DEMANDS[Math.floor(Math.random() * PLEASE_DEMANDS.length)]!;
-    await message.reply(`<@${message.author.id}> ${demand}`).catch(() => null);
-    const timeout = setTimeout(() => {
-      pendingPlease.delete(message.author.id);
-    }, 60_000);
-    pendingPlease.set(message.author.id, { execute, timeout, channelId: message.channelId });
-    return;
-  }
-
-  await execute();
+  await message.reply(nextButlerResponse()).catch(() => null);
+  await runPrefixCommand(db, message, command, rest);
 }
 
 async function runPrefixCommand(db: AppDatabase, message: Message, command: string, args: string): Promise<void> {
