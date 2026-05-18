@@ -56,6 +56,7 @@ export type GuildConfig = {
   promoteDemoteRoleIds: string[];
   isSecondary: boolean;
   funBehaviorEnabled: boolean;
+  tarfabMemberRoleId: string | null;
   createdAt: string;
   updatedAt: string;
 };

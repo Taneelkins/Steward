@@ -20,6 +20,7 @@ import { handleApprovalButton, handleExecutePunishment, handleFixPunishmentButto
 import { handleDataButton, handleDataModal } from "./services/playerData.js";
 import { postStartupAnnouncement, saveShoutsChannels } from "./services/startupAnnouncement.js";
 import { handlePrefixCommand, handleStewardPing } from "./services/prefixCommands.js";
+import { handleStewardKeyword } from "./services/stewardKeywords.js";
 import { checkSlashPlease } from "./services/slashPleaseGate.js";
 
 const env = readEnv();
@@ -280,6 +281,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 client.on(Events.MessageCreate, async (message) => {
   await checkSlashPlease(db, message).catch((error) => {
     console.error("Slash please gate check failed:", error);
+  });
+  await handleStewardKeyword(db, client, message).catch((error) => {
+    console.error("Steward keyword handling failed:", error);
   });
   await handleStewardPing(db, client, message).catch((error) => {
     console.error("Steward ping handling failed:", error);

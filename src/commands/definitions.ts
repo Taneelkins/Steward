@@ -260,12 +260,24 @@ export function buildCommands(options: CommandBuildOptions = {}) {
           .addRoleOption((o) => o.setName("senior_mod").setDescription("Senior Mod role."))
           .addRoleOption((o) => o.setName("head_mod").setDescription("Head Mod role."))
           .addRoleOption((o) => o.setName("community_manager").setDescription("Community Manager role."))
+          .addRoleOption((o) => o.setName("tarfab_member").setDescription("Tarfab member role (enables keyword interactions with Steward)."))
       )
       .addSubcommand((sub) =>
         sub
           .setName("list")
           .setDescription("Show current secondary server config — tier roles and jail setup.")
+      ),
+
+    new SlashCommandBuilder()
+      .setName("say")
+      .setDescription("Make Steward say something. (Owner only)")
+      .addStringOption((o) =>
+        o.setName("message").setDescription("What Steward should say.").setRequired(true)
       )
+      .addStringOption((o) =>
+        o.setName("message_link").setDescription("Discord message link to reply to (optional).")
+      )
+      .setDefaultMemberPermissions(headDefault)
   ];
 
   return commands.map((command) => command.toJSON());
@@ -294,6 +306,7 @@ export function buildSecondaryCommands() {
           .addRoleOption((o) => o.setName("senior_mod").setDescription("Senior Mod role."))
           .addRoleOption((o) => o.setName("head_mod").setDescription("Head Mod role."))
           .addRoleOption((o) => o.setName("community_manager").setDescription("Community Manager role."))
+          .addRoleOption((o) => o.setName("tarfab_member").setDescription("Tarfab member role (enables keyword interactions with Steward)."))
       )
       .addSubcommand((sub) =>
         sub.setName("list").setDescription("Show current secondary server config — tier roles and jail setup.")

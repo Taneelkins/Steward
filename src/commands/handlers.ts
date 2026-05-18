@@ -88,6 +88,7 @@ const SECONDARY_ALLOWED_COMMANDS = new Set([
   "unban",
   "kick",
   "warn",
+  "say",
 ]);
 
 export async function handleChatInputCommand(interaction: ChatInputCommandInteraction, context: CommandContext) {
@@ -288,6 +289,9 @@ export async function handleChatInputCommand(interaction: ChatInputCommandIntera
         break;
       case "warn":
         await handleCrossWarn(interaction, context.db);
+        break;
+      case "say":
+        await handleSay(interaction);
         break;
       default:
         await interaction.reply({ content: "Unknown command.", ephemeral: true });
@@ -2803,6 +2807,12 @@ async function handleSetupSecondary(
       upsertStaffRole(db, guild.id, key, role);
     }
 
+    // Save tarfab member role if provided
+    const tarfabRole = interaction.options.getRole("tarfab_member") as Role | null;
+    if (tarfabRole) {
+      db.updateGuildConfig(guild.id, { tarfab_member_role_id: tarfabRole.id });
+    }
+
     // Mark as secondary — command set will be trimmed on next bot restart
     db.updateGuildConfig(guild.id, { is_secondary: 1 });
 
@@ -2814,8 +2824,10 @@ async function handleSetupSecondary(
       ? `\n\n⚠️ Not found (set manually with role options): ${notFound.map((k) => `**${TIER_DISPLAY[k]}**`).join(", ")}`
       : "";
 
+    const tarfabLine = tarfabRole ? `\n• **Tarfab Member** → ${tarfabRole.name} (\`${tarfabRole.id}\`) — ✅ set` : "";
+
     await interaction.editReply(
-      `**Staff tier roles configured:**\n${lines.join("\n")}${missingLines}\n\n` +
+      `**Staff tier roles configured:**\n${lines.join("\n")}${tarfabLine}${missingLines}\n\n` +
       `This server is now marked as a **secondary server**.\n🔄 Restart the bot to apply the trimmed command set to this server.`
     );
     return;
@@ -3020,5 +3032,47 @@ async function replyError(interaction: ChatInputCommandInteraction, error: unkno
     await interaction.editReply({ content: options.content as string }).catch(() => null);
   } else {
     await interaction.reply(options).catch(() => null);
+  }
+}
+
+async function handleSay(interaction: ChatInputCommandInteraction) {
+  const DEV_USER_ID = "616267913799925782";
+  if (interaction.user.id !== DEV_USER_ID) {
+    await interaction.reply({ content: "You dare speak for me? Silence.", ephemeral: true });
+    return;
+  }
+
+  const text = interaction.options.getString("message", true);
+  const messageLink = interaction.options.getString("message_link");
+
+  await interaction.deferReply({ ephemeral: true });
+
+  if (messageLink) {
+    const match = messageLink.match(/channels\/(\d+)\/(\d+)\/(\d+)/);
+    if (!match) {
+      await interaction.editReply("Invalid message link. Use a Discord message URL.");
+      return;
+    }
+    const [, , channelId, messageId] = match;
+    const channel = await interaction.client.channels.fetch(channelId!).catch(() => null);
+    if (!channel || !("messages" in channel)) {
+      await interaction.editReply("Could not find that channel.");
+      return;
+    }
+    const target = await (channel as TextChannel).messages.fetch(messageId!).catch(() => null);
+    if (!target) {
+      await interaction.editReply("Could not find that message.");
+      return;
+    }
+    await target.reply(text).catch(() => null);
+    await interaction.editReply("✅ Done.");
+  } else {
+    const channel = interaction.channel;
+    if (!channel || !("send" in channel)) {
+      await interaction.editReply("Cannot send here.");
+      return;
+    }
+    await (channel as TextChannel).send(text).catch(() => null);
+    await interaction.editReply("✅ Done.");
   }
 }
