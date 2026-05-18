@@ -1420,8 +1420,13 @@ async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteracti
       return;
     }
 
+    // Determine junior status BEFORE the update so the SQL can set it correctly.
+    const member = interaction.member as GuildMember;
+    const isJunior = getStaffTier(db, member) === "junior";
+
     const timestamp = new Date().toISOString();
     // NOTE: action_name + action_display_name are included so a type change is actually saved.
+    // junior_review_status: juniors go back to pending re-approval; non-juniors keep existing status.
     db.run(
       `UPDATE moderation_cases SET
         action_name = ?, action_display_name = ?,
@@ -1429,7 +1434,7 @@ async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteracti
         media_links_json = ?, punishment_length = ?, is_no_action = ?,
         appeal_type = ?, appeal_result = ?,
         roblox_username = ?, roblox_id = ?, discord_username = ?, discord_id = ?,
-        junior_review_status = 'pending', updated_at = ?
+        junior_review_status = ?, updated_at = ?
        WHERE guild_id = ? AND id = ?`,
       draft.actionName, draft.actionDisplayName ?? null,
       draft.reason ?? "No reason provided.", evidence, draft.notes ?? null,
@@ -1439,6 +1444,7 @@ async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteracti
       draft.appealType ?? null, draft.appealResult ?? null,
       draft.targetInfo.robloxUsername ?? null, draft.targetInfo.robloxId ?? null,
       draft.targetInfo.discordUsername ?? null, draft.targetInfo.discordId ?? null,
+      isJunior ? "pending" : (oldRecord.juniorReviewStatus ?? null),
       timestamp, draft.guildId, caseId
     );
 
@@ -1447,9 +1453,6 @@ async function resubmitEditedDraft(db: AppDatabase, interaction: ButtonInteracti
       await interaction.followUp({ content: "Failed to update case.", ephemeral: true });
       return;
     }
-
-    const member = interaction.member as GuildMember;
-    const isJunior = getStaffTier(db, member) === "junior";
 
     // Resolve the correct log channel for the (possibly changed) action type.
     // Same logic as the junior-review approve handler in cases.ts.

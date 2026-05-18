@@ -215,13 +215,13 @@ export async function requireMod(db: AppDatabase, member: GuildMember) {
 export function configSummaryEmbed(
   config: GuildConfig,
   extra: { ingameLogChannelId?: string | null; robloxGame?: { name: string; universeId: string } | null } = {}
-) {
+): EmbedBuilder[] {
   const robloxValue = extra.robloxGame
     ? `**${extra.robloxGame.name}**\nUniverse \`${extra.robloxGame.universeId}\``
     : "Not configured — run `/roblox`";
 
-  return new EmbedBuilder()
-    .setTitle("Bot Configuration")
+  const embed1 = new EmbedBuilder()
+    .setTitle("Bot Configuration — Channels & Roles")
     .setColor(colors.voidPurple)
     .addFields(
       { name: "Mod Role", value: config.modRoleId ? `<@&${config.modRoleId}>` : "Not set", inline: true },
@@ -241,6 +241,13 @@ export function configSummaryEmbed(
       { name: "LOA Approval", value: config.loaChannelId ? `<#${config.loaChannelId}>` : "Not set", inline: true },
       { name: "LOA Log", value: config.loaLogChannelId ? `<#${config.loaLogChannelId}>` : "Not set", inline: true },
       { name: "Shouts Channel", value: config.shoutsChannelId ? `<#${config.shoutsChannelId}>` : "Not set", inline: true },
+      { name: "Cross-Server Comms", value: config.crossserverCommsChannelId ? `<#${config.crossserverCommsChannelId}>` : "Not set", inline: true }
+    );
+
+  const embed2 = new EmbedBuilder()
+    .setTitle("Bot Configuration — Settings")
+    .setColor(colors.voidPurple)
+    .addFields(
       { name: "Roblox Game", value: robloxValue, inline: true },
       { name: "Timezone", value: config.timezone, inline: true },
       { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true },
@@ -252,7 +259,6 @@ export function configSummaryEmbed(
       { name: "Jail Category", value: config.jailCategoryId ? `<#${config.jailCategoryId}>` : "Not set", inline: true },
       { name: "Jail Chat", value: config.jailChatId ? `<#${config.jailChatId}>` : "Not set", inline: true },
       { name: "Jail Announcements", value: config.jailAnnouncementsId ? `<#${config.jailAnnouncementsId}>` : "Not set", inline: true },
-      { name: "Cross-Server Comms", value: config.crossserverCommsChannelId ? `<#${config.crossserverCommsChannelId}>` : "Not set", inline: true },
       { name: "Promote/Demote Roles", value: config.promoteDemoteRoleIds.length > 0 ? config.promoteDemoteRoleIds.map((id) => `<@&${id}>`).join(", ") : "None", inline: true },
       {
         name: "Auto-Punish",
@@ -268,6 +274,8 @@ export function configSummaryEmbed(
         inline: true
       }
     );
+
+  return [embed1, embed2];
 }
 
 export function textPreview(channel: TextBasedChannel | null, fallback = "Unknown") {

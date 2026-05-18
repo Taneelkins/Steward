@@ -551,7 +551,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
       legacyModRoleId: roleUpdates.legacyModRole?.id,
       legacyAdminRoleId: roleUpdates.legacyAdminRole?.id
     });
-    await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
+    await interaction.reply({ embeds: configEmbed(db, guild.id), ephemeral: true });
     return;
   }
 
@@ -581,7 +581,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
       ...(promoteDemoteRoleIdsJson !== undefined ? { promote_demote_role_ids_json: promoteDemoteRoleIdsJson } : {})
     });
     await writeAuditAndPost(db, guild, interaction.user.id, "config.behavior.updated", { interactiveLog, linkedServer, moderationInvite, juniorApprovalPoints, promoteDemoteRoleId: promoteDemoteRole?.id });
-    await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
+    await interaction.reply({ embeds: configEmbed(db, guild.id), ephemeral: true });
     return;
   }
 
@@ -616,7 +616,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     ...values,
     actionLogs: actionLogUpdates.map((update) => ({ actionName: update.actionName, channelId: update.channel.id }))
   });
-  await interaction.reply({ embeds: [configEmbed(db, guild.id)], ephemeral: true });
+  await interaction.reply({ embeds: configEmbed(db, guild.id), ephemeral: true });
 }
 
 async function handleModshop(interaction: ChatInputCommandInteraction, { db, env }: CommandContext, member: GuildMember) {
