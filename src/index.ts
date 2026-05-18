@@ -19,6 +19,7 @@ import { handleHelpButton } from "./services/helpMenu.js";
 import { handleApprovalButton, handleExecutePunishment, handleFixPunishmentButton, handleFixPunishmentModal, handleJuniorReviewButton, handleJuniorReviewModal, handleTranscriptButton } from "./services/cases.js";
 import { handleDataButton, handleDataModal } from "./services/playerData.js";
 import { postStartupAnnouncement, saveShoutsChannels } from "./services/startupAnnouncement.js";
+import { handlePrefixCommand } from "./services/prefixCommands.js";
 
 const env = readEnv();
 assertRuntimeEnv(env);
@@ -276,6 +277,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
+  await handlePrefixCommand(db, message).catch((error) => {
+    console.error("Prefix command handling failed:", error);
+  });
   await handleLogMediaMessage(db, message).catch((error) => {
     console.error("Log media handling failed:", error);
   });

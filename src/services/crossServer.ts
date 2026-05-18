@@ -24,6 +24,7 @@ import {
   ButtonStyle,
   ChatInputCommandInteraction,
   EmbedBuilder,
+  Guild,
   GuildMember,
   TextChannel
 } from "discord.js";
@@ -86,7 +87,7 @@ function buildFillButton(
 
 // ── Post incomplete log to main server's crossserverCommsChannel ──────────────
 
-async function postPendingLog(
+export async function postPendingLog(
   client: Client,
   db: AppDatabase,
   secondaryGuildId: string,
@@ -146,7 +147,7 @@ async function postPendingLog(
 
 // ── DM the punished/released user ─────────────────────────────────────────────
 
-async function dmUser(
+export async function dmUser(
   client: Client,
   targetId: string,
   lines: (string | null)[]
@@ -159,8 +160,8 @@ async function dmUser(
 
 // ── Ping the TARGET in the secondary server's crossservercomms ────────────────
 
-async function notifyTargetInComms(
-  secondaryGuild: import("discord.js").Guild,
+export async function notifyTargetInComms(
+  secondaryGuild: Guild,
   db: AppDatabase,
   targetId: string,
   message: string
