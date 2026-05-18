@@ -278,7 +278,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
-  await checkSlashPlease(message).catch((error) => {
+  await checkSlashPlease(db, message).catch((error) => {
     console.error("Slash please gate check failed:", error);
   });
   await handleStewardPing(db, client, message).catch((error) => {

@@ -263,9 +263,11 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
   } else if (roll < 0.65) {
     // ~35% chance: demand they beg — "I'm sorry" within 60s spares them, otherwise jailed for 1 hour
     await message.reply(`<@${message.author.id}> ${pick(BEG_DEMANDS)}`).catch(() => null);
+    const begGuild = message.guild!;
     const timeout = setTimeout(async () => {
       pendingBeg.delete(message.author.id);
-      await jailInsolentUserById(db, message.guild!, message.author.id, pick(BEG_FAILED));
+      if (!db.getGuildConfig(begGuild.id).funBehaviorEnabled) return;
+      await jailInsolentUserById(db, begGuild, message.author.id, pick(BEG_FAILED));
     }, 60_000);
     pendingBeg.set(message.author.id, { timeout, channelId: message.channelId, guildId: message.guild!.id });
   } else {

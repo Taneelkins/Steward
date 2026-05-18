@@ -9,6 +9,7 @@
  */
 
 import type { ChatInputCommandInteraction, Message } from "discord.js";
+import type { AppDatabase } from "../db.js";
 
 const GATE_CHANCE = 0.35;
 
@@ -41,6 +42,7 @@ type PendingEntry = {
   exec: GatedExec;
   timeout: ReturnType<typeof setTimeout>;
   channelId: string;
+  guildId: string;
 };
 
 const pending = new Map<string, PendingEntry>();
@@ -76,7 +78,8 @@ export async function slashPleaseGate(
   pending.set(interaction.user.id, {
     exec: execute,
     timeout,
-    channelId: interaction.channelId
+    channelId: interaction.channelId,
+    guildId: interaction.guildId ?? ""
   });
 
   return true;
@@ -86,12 +89,19 @@ export async function slashPleaseGate(
  * Call this from MessageCreate. Returns true if the message resolved a pending gate
  * (so you can skip further processing if desired).
  */
-export async function checkSlashPlease(message: Message): Promise<boolean> {
+export async function checkSlashPlease(db: AppDatabase, message: Message): Promise<boolean> {
   if (message.author.bot) return false;
   const entry = pending.get(message.author.id);
   if (!entry) return false;
   if (!/\bplease\b/i.test(message.content)) return false;
   if (message.channelId !== entry.channelId) return false;
+
+  // If fun behavior was disabled after the gate was set, cancel silently
+  if (entry.guildId && !db.getGuildConfig(entry.guildId).funBehaviorEnabled) {
+    pending.delete(message.author.id);
+    clearTimeout(entry.timeout);
+    return false;
+  }
 
   pending.delete(message.author.id);
   clearTimeout(entry.timeout);
