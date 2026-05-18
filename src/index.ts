@@ -20,6 +20,7 @@ import { handleApprovalButton, handleExecutePunishment, handleFixPunishmentButto
 import { handleDataButton, handleDataModal } from "./services/playerData.js";
 import { postStartupAnnouncement, saveShoutsChannels } from "./services/startupAnnouncement.js";
 import { handlePrefixCommand } from "./services/prefixCommands.js";
+import { checkSlashPlease } from "./services/slashPleaseGate.js";
 
 const env = readEnv();
 assertRuntimeEnv(env);
@@ -277,6 +278,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
+  await checkSlashPlease(message).catch((error) => {
+    console.error("Slash please gate check failed:", error);
+  });
   await handlePrefixCommand(db, message).catch((error) => {
     console.error("Prefix command handling failed:", error);
   });

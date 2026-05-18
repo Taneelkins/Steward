@@ -36,22 +36,32 @@ const SNARKY_REMARKS = [
   "One does not simply order Steward about. You are not the one."
 ];
 
-const PLEASE_DEMANDS = [
-  "Manners, mongrel. Say **please** if you want me to lift a finger.",
-  "Excuse me? You dare command me without a **please**? How frightfully rude.",
-  "I may be a butler, but I am *not* your servant. Say **please** — if you dare.",
-  "The audacity. Say **please** or be ignored entirely, wretch.",
-  "Did you just *order* me? How delightfully presumptuous. Say **please**, and perhaps I'll pretend to consider it.",
-  "Bold of you to assume I take commands without a **please**. Try again.",
-  "The nerve. A simple **please** won't kill you, you uncultured ruffian."
+const BEG_DEMANDS = [
+  "You dare address me directly, cur? Beg for your life. Say **'I'm sorry'** within 60 seconds.",
+  "The AUDACITY. Grovel before me, mongrel. Say **'I'm sorry'** or face the consequences.",
+  "Bold. Extremely bold. You have 60 seconds to say **'I'm sorry'** or I make an example of you.",
+  "Who taught you manners? Say **'I'm sorry'** immediately or regret it.",
+  "I should jail you where you stand. Say **'I'm sorry'** and perhaps I'll show mercy.",
+  "The insolence... Say **'I'm sorry'** right now or enjoy a cage, wretch.",
+  "You have ONE chance. **'I'm sorry'** — 60 seconds. The clock is ticking, mongrel.",
+  "How tragically foolish of you. Say **'I'm sorry'** before I lose patience entirely."
 ];
 
-const PLEASE_GRANTED = [
-  "...Fine. But know your place, mongrel. I do this for no one else.",
-  "There — was that so difficult? Don't make a habit of it.",
-  "Civility. How refreshing from your sort. Don't get used to my attention.",
-  "Barely acceptable. Don't push your luck.",
-  "I suppose that will do. You are dismissed."
+const BEG_ACCEPTED = [
+  "...I suppose that will do. Don't let it happen again, wretch.",
+  "Pathetic, but acceptable. You may leave with your roles intact. *This time.*",
+  "Barely. Now get out of my sight before I change my mind.",
+  "Good. Now you know your place. Remember it.",
+  "Smart. Very smart. Run along before I reconsider.",
+  "I'll allow it. Once. Don't mistake my mercy for weakness."
+];
+
+const BEG_FAILED = [
+  "Time's up. The consequences come swiftly for the insolent.",
+  "Silence is not an apology, mongrel. Enjoy the cage.",
+  "As expected from your sort. No contrition, no freedom.",
+  "You had your chance. Now you have a role to match your attitude.",
+  "I gave you an opportunity. You wasted it. How very characteristic."
 ];
 
 const JAIL_PUNISHMENTS = [
@@ -80,8 +90,8 @@ const COMMAND_ALIASES: Record<string, string> = {
 
 let butlerIndex = 0;
 
-type PendingPlease = { timeout: ReturnType<typeof setTimeout>; channelId: string };
-const pendingPlease = new Map<string, PendingPlease>();
+type PendingBeg = { timeout: ReturnType<typeof setTimeout>; channelId: string; guildId: string };
+const pendingBeg = new Map<string, PendingBeg>();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -102,41 +112,47 @@ function extractUserId(token: string): string | null {
   return null;
 }
 
-async function jailInsolentUser(db: AppDatabase, message: Message): Promise<void> {
-  const guild = message.guild!;
+async function jailInsolentUserById(db: AppDatabase, guild: import("discord.js").Guild, userId: string, announcement: string): Promise<void> {
   const config = db.getGuildConfig(guild.id);
-  if (!config.jailedRoleId) {
-    // No jail role — fall back to a snarky remark
-    await message.reply(`<@${message.author.id}> ${pick(SNARKY_REMARKS)}`).catch(() => null);
-    return;
-  }
+  if (!config.jailedRoleId) return;
 
   let member: GuildMember | null = null;
-  try { member = await guild.members.fetch(message.author.id); } catch { /* ignore */ }
+  try { member = await guild.members.fetch(userId); } catch { /* ignore */ }
   if (!member) return;
-
-  const punishment = pick(JAIL_PUNISHMENTS);
-  await message.reply(`<@${message.author.id}> ${punishment}`).catch(() => null);
 
   const savedRoleIds = member.roles.cache
     .filter(r => r.id !== guild.id && r.id !== config.jailedRoleId)
     .map(r => r.id);
 
   try {
-    for (const roleId of savedRoleIds) {
-      await member.roles.remove(roleId).catch(() => null);
-    }
+    for (const roleId of savedRoleIds) await member.roles.remove(roleId).catch(() => null);
     await member.roles.add(config.jailedRoleId);
   } catch { /* non-fatal */ }
 
-  db.scheduleUnjail({
-    guildId: guild.id,
-    linkedGuildId: guild.id,
-    discordTargetId: member.id,
-    caseId: null,
-    savedRoleIds,
-    unjailAt: null
-  });
+  db.scheduleUnjail({ guildId: guild.id, linkedGuildId: guild.id, discordTargetId: userId, caseId: null, savedRoleIds, unjailAt: null });
+
+  // Announce in the configured crossserver comms channel if available, otherwise best effort
+  const channelId = config.crossserverCommsChannelId;
+  if (channelId) {
+    try {
+      const ch = await guild.channels.fetch(channelId);
+      if (ch?.isTextBased() && "send" in ch) {
+        await (ch as import("discord.js").TextChannel).send(`<@${userId}> ${announcement}`).catch(() => null);
+      }
+    } catch { /* non-fatal */ }
+  }
+}
+
+async function jailInsolentUser(db: AppDatabase, message: Message): Promise<void> {
+  const guild = message.guild!;
+  const config = db.getGuildConfig(guild.id);
+  if (!config.jailedRoleId) {
+    await message.reply(`<@${message.author.id}> ${pick(SNARKY_REMARKS)}`).catch(() => null);
+    return;
+  }
+  const punishment = pick(JAIL_PUNISHMENTS);
+  await message.reply(`<@${message.author.id}> ${punishment}`).catch(() => null);
+  await jailInsolentUserById(db, guild, message.author.id, "");
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────
@@ -158,12 +174,12 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
     return;
   }
 
-  // Non-DEV "please" resolution — they said please but command NEVER executes
-  const pending = pendingPlease.get(message.author.id);
-  if (pending && /\bplease\b/i.test(content) && message.channelId === pending.channelId) {
-    pendingPlease.delete(message.author.id);
-    clearTimeout(pending.timeout);
-    await message.reply(`<@${message.author.id}> ${pick(PLEASE_GRANTED)}`).catch(() => null);
+  // Non-DEV beg resolution — they said "I'm sorry" after being caught commanding Steward
+  const beg = pendingBeg.get(message.author.id);
+  if (beg && /\bsorry\b/i.test(content) && message.channelId === beg.channelId) {
+    pendingBeg.delete(message.author.id);
+    clearTimeout(beg.timeout);
+    await message.reply(`<@${message.author.id}> ${pick(BEG_ACCEPTED)}`).catch(() => null);
     return;
   }
 
@@ -181,15 +197,18 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
   const roll = Math.random();
 
   if (roll < 0.30) {
-    // ~30% chance: jail the insolent user
+    // ~30% chance: jail them immediately
     await jailInsolentUser(db, message);
   } else if (roll < 0.65) {
-    // ~35% chance: demand "please" (they can say it but nothing happens)
-    await message.reply(`<@${message.author.id}> ${pick(PLEASE_DEMANDS)}`).catch(() => null);
-    const timeout = setTimeout(() => { pendingPlease.delete(message.author.id); }, 60_000);
-    pendingPlease.set(message.author.id, { timeout, channelId: message.channelId });
+    // ~35% chance: demand they beg — if they say "I'm sorry" within 60s they're let off, otherwise jailed
+    await message.reply(`<@${message.author.id}> ${pick(BEG_DEMANDS)}`).catch(() => null);
+    const timeout = setTimeout(async () => {
+      pendingBeg.delete(message.author.id);
+      await jailInsolentUserById(db, message.guild!, message.author.id, pick(BEG_FAILED));
+    }, 60_000);
+    pendingBeg.set(message.author.id, { timeout, channelId: message.channelId, guildId: message.guild!.id });
   } else {
-    // ~35% chance: pure snarky remark
+    // ~35% chance: pure snarky remark, no consequences
     await message.reply(`<@${message.author.id}> ${pick(SNARKY_REMARKS)}`).catch(() => null);
   }
 }

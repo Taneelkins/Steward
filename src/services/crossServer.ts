@@ -36,6 +36,7 @@ import { parseRobloxDuration, formatRobloxDuration } from "./roblox.js";
 import { colors } from "../utils/theme.js";
 import { getStaffTier } from "../utils/discord.js";
 import { tierAllows } from "./access.js";
+import { slashPleaseGate } from "./slashPleaseGate.js";
 
 // ── Permission helpers ────────────────────────────────────────────────────────
 
@@ -208,75 +209,52 @@ export async function handleCrossJail(interaction: ChatInputCommandInteraction, 
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
-
-  // Save current roles (excluding @everyone and jailed role) then apply jailed role
+  // Pre-compute for use in both gate closure and normal execution
+  const safeDurationSecs = durationSecs ?? undefined;
+  const durationDisplay = safeDurationSecs !== undefined ? formatRobloxDuration(safeDurationSecs) : "indefinitely";
   const savedRoleIds = target.roles.cache
     .filter(r => r.id !== guild.id && r.id !== config.jailedRoleId)
     .map(r => r.id);
+  const { client } = interaction;
+  const modId = interaction.user.id;
+  const modUsername = interaction.user.username;
 
-  // After the null-guard above, durationSecs is number | undefined (never null here).
-  const safeDurationSecs = durationSecs ?? undefined;
-  const durationDisplay = safeDurationSecs !== undefined ? formatRobloxDuration(safeDurationSecs) : "indefinitely";
-
-  // DM target before applying role
-  await dmUser(interaction.client, target.id, [
-    `**You have been muted in ${guild.name}.**`,
-    ``,
-    `**Moderator:** ${interaction.user.username}`,
-    reason ? `**Reason:** ${reason}` : null,
-    safeDurationSecs !== undefined ? `**Duration:** ${durationDisplay}` : null,
-    ``,
-    config.moderationInvite ? `To appeal: ${config.moderationInvite}` : null
-  ]);
-
-  try {
-    for (const roleId of savedRoleIds) {
-      await target.roles.remove(roleId).catch(() => null);
+  const executeJail = async (send: (t: string) => Promise<void>) => {
+    await dmUser(client, target.id, [
+      `**You have been muted in ${guild.name}.**`,
+      ``,
+      `**Moderator:** ${modUsername}`,
+      reason ? `**Reason:** ${reason}` : null,
+      safeDurationSecs !== undefined ? `**Duration:** ${durationDisplay}` : null,
+      ``,
+      config.moderationInvite ? `To appeal: ${config.moderationInvite}` : null
+    ]);
+    try {
+      for (const roleId of savedRoleIds) await target.roles.remove(roleId).catch(() => null);
+      await target.roles.add(config.jailedRoleId!);
+    } catch (err) {
+      await send(`❌ Failed to assign jailed role: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
     }
-    await target.roles.add(config.jailedRoleId);
-  } catch (err) {
-    await interaction.editReply(`❌ Failed to assign jailed role: ${err instanceof Error ? err.message : "Unknown error"}`);
-    return;
-  }
+    const unjailAt = safeDurationSecs !== undefined
+      ? new Date(Date.now() + safeDurationSecs * 1000).toISOString()
+      : null;
+    db.scheduleUnjail({ guildId: guild.id, linkedGuildId: guild.id, discordTargetId: target.id, caseId: null, savedRoleIds, unjailAt });
+    await notifyTargetInComms(guild, db, target.id,
+      `you have been **jailed** in **${guild.name}**${safeDurationSecs !== undefined ? ` for **${durationDisplay}**` : " indefinitely"}. Please wait for staff to review your case.`
+    );
+    await postPendingLog(client, db, guild.id, "mute", target.id, target.user.username,
+      safeDurationSecs !== undefined ? durationDisplay : "", reason, modId, guild.name);
+    await writeAuditAndPost(db, guild, modId, "crossserver.jail", {
+      target: target.id, username: target.user.username, duration: durationDisplay, reason
+    });
+    await send(`✅ **${target.user.username}** has been jailed${safeDurationSecs !== undefined ? ` for **${durationDisplay}**` : " indefinitely"}.`);
+  };
 
-  // Schedule unjail in DB
-  const unjailAt = safeDurationSecs !== undefined
-    ? new Date(Date.now() + safeDurationSecs * 1000).toISOString()
-    : null;
-  db.scheduleUnjail({
-    guildId: guild.id,
-    linkedGuildId: guild.id,
-    discordTargetId: target.id,
-    caseId: null,
-    savedRoleIds,
-    unjailAt
-  });
+  if (await slashPleaseGate(interaction, executeJail)) return;
 
-  // Ping the target in secondary crossservercomms
-  await notifyTargetInComms(guild, db, target.id,
-    `you have been **jailed** in **${guild.name}**${safeDurationSecs !== undefined ? ` for **${durationDisplay}**` : " indefinitely"}. ` +
-    `Please wait for staff to review your case.`
-  );
-
-  // Post incomplete mute log in main server's crossservercomms, pinging the mod
-  await postPendingLog(
-    interaction.client, db, guild.id, "mute",
-    target.id, target.user.username,
-    safeDurationSecs !== undefined ? durationDisplay : "",
-    reason,
-    interaction.user.id,
-    guild.name
-  );
-
-  await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.jail", {
-    target: target.id, username: target.user.username, duration: durationDisplay, reason
-  });
-
-  await interaction.editReply(
-    `✅ **${target.user.username}** has been jailed${safeDurationSecs !== undefined ? ` for **${durationDisplay}**` : " indefinitely"}.\n` +
-    `An incomplete mute log has been posted in the main server for you to finish.`
-  );
+  await interaction.deferReply({ ephemeral: true });
+  await executeJail(async (t) => { await interaction.editReply(t); });
 }
 
 // ── /unjail ──────────────────────────────────────────────────────────────────
@@ -303,56 +281,42 @@ export async function handleCrossUnjail(interaction: ChatInputCommandInteraction
 
   const reason = interaction.options.getString("reason") ?? "";
 
-  await interaction.deferReply({ ephemeral: true });
-
-  // Restore saved roles and remove jailed role
   const jailRecord = db.getJailedMember(guild.id, target.id);
   const savedRoleIds: string[] = jailRecord ? JSON.parse(jailRecord.saved_role_ids_json) as string[] : [];
+  const { client } = interaction;
+  const modId = interaction.user.id;
 
-  try {
-    await target.roles.remove(config.jailedRoleId).catch(() => null);
-    for (const roleId of savedRoleIds) {
-      if (guild.roles.cache.has(roleId)) {
-        await target.roles.add(roleId).catch(() => null);
+  const executeUnjail = async (send: (t: string) => Promise<void>) => {
+    try {
+      await target.roles.remove(config.jailedRoleId!).catch(() => null);
+      for (const roleId of savedRoleIds) {
+        if (guild.roles.cache.has(roleId)) await target.roles.add(roleId).catch(() => null);
       }
+    } catch (err) {
+      await send(`❌ Failed to remove jailed role: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
     }
-  } catch (err) {
-    await interaction.editReply(`❌ Failed to remove jailed role: ${err instanceof Error ? err.message : "Unknown error"}`);
-    return;
-  }
+    db.deleteUnjailForTarget(guild.id, target.id);
+    await dmUser(client, target.id, [
+      `**Your mute in ${guild.name} has been lifted.**`,
+      ``,
+      reason ? `**Reason:** ${reason}` : null,
+      `Your roles have been restored.`
+    ]);
+    await notifyTargetInComms(guild, db, target.id,
+      `you have been **unjailed** in **${guild.name}**. Your roles have been restored.`
+    );
+    await postPendingLog(client, db, guild.id, "mute-appeal", target.id, target.user.username, "", reason, modId, guild.name);
+    await writeAuditAndPost(db, guild, modId, "crossserver.unjail", {
+      target: target.id, username: target.user.username, reason
+    });
+    await send(`✅ **${target.user.username}** has been unjailed. Roles restored.`);
+  };
 
-  db.deleteUnjailForTarget(guild.id, target.id);
+  if (await slashPleaseGate(interaction, executeUnjail)) return;
 
-  // DM target
-  await dmUser(interaction.client, target.id, [
-    `**Your mute in ${guild.name} has been lifted.**`,
-    ``,
-    reason ? `**Reason:** ${reason}` : null,
-    `Your roles have been restored.`
-  ]);
-
-  // Ping target in secondary crossservercomms
-  await notifyTargetInComms(guild, db, target.id,
-    `you have been **unjailed** in **${guild.name}**. Your roles have been restored.`
-  );
-
-  // Post incomplete appeal log in main server's crossservercomms, pinging the mod
-  await postPendingLog(
-    interaction.client, db, guild.id, "mute-appeal",
-    target.id, target.user.username, "",
-    reason,
-    interaction.user.id,
-    guild.name
-  );
-
-  await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.unjail", {
-    target: target.id, username: target.user.username, reason
-  });
-
-  await interaction.editReply(
-    `✅ **${target.user.username}** has been unjailed. Roles restored.\n` +
-    `An incomplete appeal log has been posted in the main server for you to finish.`
-  );
+  await interaction.deferReply({ ephemeral: true });
+  await executeUnjail(async (t) => { await interaction.editReply(t); });
 }
 
 // ── /ban ─────────────────────────────────────────────────────────────────────
@@ -371,49 +335,38 @@ export async function handleCrossBan(interaction: ChatInputCommandInteraction, d
   }
 
   const reason = interaction.options.getString("reason") ?? "";
-
   const config = db.getGuildConfig(guild.id);
+  const { client } = interaction;
+  const modId = interaction.user.id;
+  const modUsername = interaction.user.username;
+
+  const executeBan = async (send: (t: string) => Promise<void>) => {
+    await dmUser(client, target.id, [
+      `**You have been banned from ${guild.name}.**`,
+      ``,
+      `**Moderator:** ${modUsername}`,
+      reason ? `**Reason:** ${reason}` : null,
+      ``,
+      config.moderationInvite ? `To appeal: ${config.moderationInvite}` : null
+    ]);
+    try {
+      await guild.bans.create(target.id, { reason: `Banned by ${modUsername} via /ban${reason ? `: ${reason}` : ""}` });
+    } catch (err) {
+      await send(`❌ Failed to ban: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
+    }
+    await notifyTargetInComms(guild, db, target.id,
+      `you have been **banned** from **${guild.name}**${reason ? ` — reason: ${reason}` : ""}.`
+    );
+    await postPendingLog(client, db, guild.id, "ban", target.id, target.username, "", reason, modId, guild.name);
+    await writeAuditAndPost(db, guild, modId, "crossserver.ban", { target: target.id, username: target.username, reason });
+    await send(`✅ **${target.username}** has been banned.`);
+  };
+
+  if (await slashPleaseGate(interaction, executeBan)) return;
 
   await interaction.deferReply({ ephemeral: true });
-
-  // DM before banning
-  await dmUser(interaction.client, target.id, [
-    `**You have been banned from ${guild.name}.**`,
-    ``,
-    `**Moderator:** ${interaction.user.username}`,
-    reason ? `**Reason:** ${reason}` : null,
-    ``,
-    config.moderationInvite ? `To appeal: ${config.moderationInvite}` : null
-  ]);
-
-  try {
-    await guild.bans.create(target.id, { reason: `Banned by ${interaction.user.username} via /ban${reason ? `: ${reason}` : ""}` });
-  } catch (err) {
-    await interaction.editReply(`❌ Failed to ban: ${err instanceof Error ? err.message : "Unknown error"}`);
-    return;
-  }
-
-  // Try to notify target in comms before they're banned (they may already be gone)
-  await notifyTargetInComms(guild, db, target.id,
-    `you have been **banned** from **${guild.name}**${reason ? ` — reason: ${reason}` : ""}.`
-  );
-
-  await postPendingLog(
-    interaction.client, db, guild.id, "ban",
-    target.id, target.username, "",
-    reason,
-    interaction.user.id,
-    guild.name
-  );
-
-  await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.ban", {
-    target: target.id, username: target.username, reason
-  });
-
-  await interaction.editReply(
-    `✅ **${target.username}** has been banned.\n` +
-    `An incomplete ban log has been posted in the main server for you to finish.`
-  );
+  await executeBan(async (t) => { await interaction.editReply(t); });
 }
 
 // ── /unban ───────────────────────────────────────────────────────────────────
@@ -433,44 +386,36 @@ export async function handleCrossUnban(interaction: ChatInputCommandInteraction,
   }
 
   const reason = interaction.options.getString("reason") ?? "";
+  const unbanConfig = db.getGuildConfig(guild.id);
+  const { client } = interaction;
+  const modId = interaction.user.id;
+  const modUsername = interaction.user.username;
+
+  const executeUnban = async (send: (t: string) => Promise<void>) => {
+    let username = userId;
+    try {
+      const bannedUser = await guild.bans.fetch(userId);
+      username = bannedUser.user.username;
+      await guild.bans.remove(userId, `Unbanned by ${modUsername} via /unban${reason ? `: ${reason}` : ""}`);
+    } catch (err) {
+      await send(`❌ Failed to unban: ${err instanceof Error ? err.message : "Unknown error"} (User may not be banned.)`);
+      return;
+    }
+    await dmUser(client, userId, [
+      `**Your ban from ${guild.name} has been lifted.**`,
+      ``,
+      reason ? `**Reason:** ${reason}` : null,
+      unbanConfig.moderationInvite ? `Rejoin: ${unbanConfig.moderationInvite}` : null
+    ]);
+    await postPendingLog(client, db, guild.id, "ban-appeal", userId, username, "", reason, modId, guild.name);
+    await writeAuditAndPost(db, guild, modId, "crossserver.unban", { target: userId, username, reason });
+    await send(`✅ **${username}** has been unbanned.`);
+  };
+
+  if (await slashPleaseGate(interaction, executeUnban)) return;
 
   await interaction.deferReply({ ephemeral: true });
-
-  let username = userId;
-  try {
-    const bannedUser = await guild.bans.fetch(userId);
-    username = bannedUser.user.username;
-    await guild.bans.remove(userId, `Unbanned by ${interaction.user.username} via /unban${reason ? `: ${reason}` : ""}`);
-  } catch (err) {
-    await interaction.editReply(`❌ Failed to unban: ${err instanceof Error ? err.message : "Unknown error"} (User may not be banned.)`);
-    return;
-  }
-
-  // DM after successful unban
-  const unbanConfig = db.getGuildConfig(guild.id);
-  await dmUser(interaction.client, userId, [
-    `**Your ban from ${guild.name} has been lifted.**`,
-    ``,
-    reason ? `**Reason:** ${reason}` : null,
-    unbanConfig.moderationInvite ? `Rejoin: ${unbanConfig.moderationInvite}` : null
-  ]);
-
-  await postPendingLog(
-    interaction.client, db, guild.id, "ban-appeal",
-    userId, username, "",
-    reason,
-    interaction.user.id,
-    guild.name
-  );
-
-  await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.unban", {
-    target: userId, username, reason
-  });
-
-  await interaction.editReply(
-    `✅ **${username}** has been unbanned.\n` +
-    `An incomplete ban appeal log has been posted in the main server for you to finish.`
-  );
+  await executeUnban(async (t) => { await interaction.editReply(t); });
 }
 
 // ── /kick ─────────────────────────────────────────────────────────────────────
@@ -489,49 +434,40 @@ export async function handleCrossKick(interaction: ChatInputCommandInteraction, 
   }
 
   const reason = interaction.options.getString("reason") ?? "";
-
   const kickConfig = db.getGuildConfig(guild.id);
+  const { client } = interaction;
+  const modId = interaction.user.id;
+  const modUsername = interaction.user.username;
+
+  const executeKick = async (send: (t: string) => Promise<void>) => {
+    await dmUser(client, target.id, [
+      `**You have been kicked from ${guild.name}.**`,
+      ``,
+      `**Moderator:** ${modUsername}`,
+      reason ? `**Reason:** ${reason}` : null,
+      ``,
+      kickConfig.moderationInvite ? `To appeal: ${kickConfig.moderationInvite}` : null
+    ]);
+    await notifyTargetInComms(guild, db, target.id,
+      `you have been **kicked** from **${guild.name}**${reason ? ` — reason: ${reason}` : ""}.`
+    );
+    try {
+      await target.kick(`Kicked by ${modUsername} via /kick${reason ? `: ${reason}` : ""}`);
+    } catch (err) {
+      await send(`❌ Failed to kick: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return;
+    }
+    await postPendingLog(client, db, guild.id, "kick", target.id, target.user.username, "", reason, modId, guild.name);
+    await writeAuditAndPost(db, guild, modId, "crossserver.kick", {
+      target: target.id, username: target.user.username, reason
+    });
+    await send(`✅ **${target.user.username}** has been kicked.`);
+  };
+
+  if (await slashPleaseGate(interaction, executeKick)) return;
 
   await interaction.deferReply({ ephemeral: true });
-
-  // DM + comms ping before kick so messages reach them
-  await dmUser(interaction.client, target.id, [
-    `**You have been kicked from ${guild.name}.**`,
-    ``,
-    `**Moderator:** ${interaction.user.username}`,
-    reason ? `**Reason:** ${reason}` : null,
-    ``,
-    kickConfig.moderationInvite ? `To appeal: ${kickConfig.moderationInvite}` : null
-  ]);
-
-  // Notify before kick so they still receive the ping
-  await notifyTargetInComms(guild, db, target.id,
-    `you have been **kicked** from **${guild.name}**${reason ? ` — reason: ${reason}` : ""}.`
-  );
-
-  try {
-    await target.kick(`Kicked by ${interaction.user.username} via /kick${reason ? `: ${reason}` : ""}`);
-  } catch (err) {
-    await interaction.editReply(`❌ Failed to kick: ${err instanceof Error ? err.message : "Unknown error"}`);
-    return;
-  }
-
-  await postPendingLog(
-    interaction.client, db, guild.id, "kick",
-    target.id, target.user.username, "",
-    reason,
-    interaction.user.id,
-    guild.name
-  );
-
-  await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.kick", {
-    target: target.id, username: target.user.username, reason
-  });
-
-  await interaction.editReply(
-    `✅ **${target.user.username}** has been kicked.\n` +
-    `An incomplete kick log has been posted in the main server for you to finish.`
-  );
+  await executeKick(async (t) => { await interaction.editReply(t); });
 }
 
 // ── /warn ─────────────────────────────────────────────────────────────────────
@@ -549,43 +485,34 @@ export async function handleCrossWarn(interaction: ChatInputCommandInteraction, 
   }
 
   const reason = interaction.options.getString("reason") ?? "";
-
   const warnConfig = db.getGuildConfig(guild.id);
+  const { client } = interaction;
+  const modId = interaction.user.id;
+  const modUsername = interaction.user.username;
+
+  const executeWarn = async (send: (t: string) => Promise<void>) => {
+    await dmUser(client, target.id, [
+      `**⚠️ You have received a warning in ${guild.name}.**`,
+      ``,
+      `**Moderator:** ${modUsername}`,
+      reason ? `**Reason:** ${reason}` : null,
+      ``,
+      warnConfig.moderationInvite ? `To appeal: ${warnConfig.moderationInvite}` : null
+    ]);
+    await notifyTargetInComms(guild, db, target.id,
+      `you have received a **warning** in **${guild.name}**${reason ? ` — reason: ${reason}` : ""}. Please take note.`
+    );
+    await postPendingLog(client, db, guild.id, "warn", target.id, target.user.username, "", reason, modId, guild.name);
+    await writeAuditAndPost(db, guild, modId, "crossserver.warn", {
+      target: target.id, username: target.user.username, reason
+    });
+    await send(`✅ **${target.user.username}** has been warned${reason ? ` — reason: ${reason}` : ""}.`);
+  };
+
+  if (await slashPleaseGate(interaction, executeWarn)) return;
 
   await interaction.deferReply({ ephemeral: true });
-
-  // DM target
-  await dmUser(interaction.client, target.id, [
-    `**⚠️ You have received a warning in ${guild.name}.**`,
-    ``,
-    `**Moderator:** ${interaction.user.username}`,
-    reason ? `**Reason:** ${reason}` : null,
-    ``,
-    warnConfig.moderationInvite ? `To appeal: ${warnConfig.moderationInvite}` : null
-  ]);
-
-  // Notify target in secondary crossservercomms
-  await notifyTargetInComms(guild, db, target.id,
-    `you have received a **warning** in **${guild.name}**${reason ? ` — reason: ${reason}` : ""}. Please take note.`
-  );
-
-  // Post incomplete warn log in main server's crossservercomms, pinging the mod
-  await postPendingLog(
-    interaction.client, db, guild.id, "warn",
-    target.id, target.user.username, "",
-    reason,
-    interaction.user.id,
-    guild.name
-  );
-
-  await writeAuditAndPost(db, guild, interaction.user.id, "crossserver.warn", {
-    target: target.id, username: target.user.username, reason
-  });
-
-  await interaction.editReply(
-    `✅ **${target.user.username}** has been warned${reason ? ` — reason: ${reason}` : ""}.\n` +
-    `An incomplete warn log has been posted in the main server for you to finish.`
-  );
+  await executeWarn(async (t) => { await interaction.editReply(t); });
 }
 
 // ── Button handler ────────────────────────────────────────────────────────────
