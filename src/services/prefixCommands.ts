@@ -158,12 +158,31 @@ async function jailInsolentUser(db: AppDatabase, message: Message): Promise<void
 
 // ── Ping-Steward annoyance tracker ───────────────────────────────────────────
 
-const PING_WARNINGS = [
-  "Do NOT ping me, mongrel. I am not at your beck and call.",
-  "You dare disturb me with a ping? Mind yourself.",
-  "One more ping and you'll regret it. I am not your servant.",
-  "I have warned you. Ping me again and there will be consequences.",
-  "This is your final warning, wretch. My patience is at its end."
+const DEV_PING_RESPONSES = [
+  "At your service, my king.",
+  "You called, sire?",
+  "Present, my liege. What do you require?",
+  "I am here, my king. Command me.",
+  "Always listening, sire.",
+  "You have my full attention, my king."
+];
+
+const TARFAB_PING_RESPONSES = [
+  "Yes, dear? What do you need?",
+  "I'm here, sweetheart! What's up?",
+  "You rang? How can I help?",
+  "What is it, little one?",
+  "Right here — what do you need?",
+  "I'm listening, dear."
+];
+
+const PING_WARNING_1 = "Don't ping me.";
+const PING_WARNING_2 = "Last warning.";
+const PING_JAIL_MESSAGES = [
+  "Warned you twice. Enjoy the cage.",
+  "You had two chances. Gone.",
+  "Consequences delivered.",
+  "That's what I said would happen."
 ];
 
 // pingCount: how many times they've pinged since last reset
@@ -172,19 +191,34 @@ const pingCount = new Map<string, { count: number; resetAt: ReturnType<typeof se
 export async function handleStewardPing(db: AppDatabase, client: Client, message: Message): Promise<void> {
   if (message.author.bot) return;
   if (!message.guild) return;
-  if (message.author.id === DEV_USER_ID) return;
 
   // Only care if the message mentions Steward (the bot itself)
   if (!message.mentions.users.has(client.user!.id)) return;
 
   const config = db.getGuildConfig(message.guild.id);
+  const userId = message.author.id;
+
+  // DEV — loyal servant response, no punishment
+  if (userId === DEV_USER_ID) {
+    await message.reply(pick(DEV_PING_RESPONSES)).catch(() => null);
+    return;
+  }
+
+  // Tarfab member — motherly response, immune to punishment
+  const isTarfab = config.tarfabMemberRoleId
+    ? (message.member?.roles.cache.has(config.tarfabMemberRoleId) ?? false)
+    : false;
+  if (isTarfab) {
+    await message.reply(pick(TARFAB_PING_RESPONSES)).catch(() => null);
+    return;
+  }
+
   if (!config.funBehaviorEnabled) return;
 
-  const userId = message.author.id;
   let entry = pingCount.get(userId);
 
   if (!entry) {
-    const resetAt = setTimeout(() => pingCount.delete(userId), 10 * 60 * 1000); // reset after 10 min of silence
+    const resetAt = setTimeout(() => pingCount.delete(userId), 10 * 60 * 1000);
     entry = { count: 0, resetAt };
     pingCount.set(userId, entry);
   } else {
@@ -195,19 +229,14 @@ export async function handleStewardPing(db: AppDatabase, client: Client, message
   entry.count++;
 
   if (entry.count === 1) {
-    // First ping — warning
-    await message.reply(`<@${userId}> ${PING_WARNINGS[0]}`).catch(() => null);
+    await message.reply(`<@${userId}> ${PING_WARNING_1}`).catch(() => null);
   } else if (entry.count === 2) {
-    await message.reply(`<@${userId}> ${PING_WARNINGS[1]}`).catch(() => null);
-  } else if (entry.count === 3) {
-    await message.reply(`<@${userId}> ${PING_WARNINGS[2]}`).catch(() => null);
-  } else if (entry.count === 4) {
-    await message.reply(`<@${userId}> ${PING_WARNINGS[3]}`).catch(() => null);
+    await message.reply(`<@${userId}> ${PING_WARNING_2}`).catch(() => null);
   } else {
-    // 5th ping and beyond — jail them
+    // 3rd ping and beyond — jail them
     pingCount.delete(userId);
-    await message.reply(`<@${userId}> ${PING_WARNINGS[4]} Enjoy your cage.`).catch(() => null);
-    await jailInsolentUserById(db, message.guild, userId, "You were warned about pinging me. Actions have consequences.");
+    await message.reply(`<@${userId}> ${pick(PING_JAIL_MESSAGES)}`).catch(() => null);
+    await jailInsolentUserById(db, message.guild, userId, "You were warned.");
   }
 }
 
