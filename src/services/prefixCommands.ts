@@ -147,6 +147,17 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
 
   const content = message.content.trim();
 
+  // ── DEV: bypass everything, always execute with butler response ───────────
+  if (message.author.id === DEV_USER_ID) {
+    const prefixMatch = content.match(/^steward\s+(\w+)(.*)/i);
+    if (!prefixMatch) return;
+    const command = COMMAND_ALIASES[prefixMatch[1]!.toLowerCase()];
+    if (!command) return;
+    await message.reply(nextButlerResponse()).catch(() => null);
+    await runPrefixCommand(db, message, command, prefixMatch[2]!.trim());
+    return;
+  }
+
   // Non-DEV "please" resolution — they said please but command NEVER executes
   const pending = pendingPlease.get(message.author.id);
   if (pending && /\bplease\b/i.test(content) && message.channelId === pending.channelId) {
@@ -165,13 +176,6 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
 
   const command = COMMAND_ALIASES[rawCommand];
   if (!command) return;
-
-  // ── DEV: butler response + execute ────────────────────────────────────────
-  if (message.author.id === DEV_USER_ID) {
-    await message.reply(nextButlerResponse()).catch(() => null);
-    await runPrefixCommand(db, message, command, rest);
-    return;
-  }
 
   // ── Everyone else: punish or mock, never execute ──────────────────────────
   const roll = Math.random();
