@@ -53,11 +53,14 @@ function pick<T>(arr: T[]): T {
  * Apply the please gate to a slash command.
  * Returns true if the gate triggered (caller should return without executing).
  * Returns false if no gate — caller should proceed with normal execution.
+ * Pass funBehaviorEnabled=false to skip the gate entirely.
  */
 export async function slashPleaseGate(
   interaction: ChatInputCommandInteraction,
-  execute: GatedExec
+  execute: GatedExec,
+  funBehaviorEnabled = true
 ): Promise<boolean> {
+  if (!funBehaviorEnabled) return false;
   if (Math.random() >= GATE_CHANCE) return false;
 
   const demand = pick(PLEASE_DEMANDS);

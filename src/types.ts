@@ -55,6 +55,7 @@ export type GuildConfig = {
   crossserverCommsChannelId: string | null;
   promoteDemoteRoleIds: string[];
   isSecondary: boolean;
+  funBehaviorEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 };

@@ -251,7 +251,7 @@ export async function handleCrossJail(interaction: ChatInputCommandInteraction, 
     await send(`✅ **${target.user.username}** has been jailed${safeDurationSecs !== undefined ? ` for **${durationDisplay}**` : " indefinitely"}.`);
   };
 
-  if (await slashPleaseGate(interaction, executeJail)) return;
+  if (await slashPleaseGate(interaction, executeJail, config.funBehaviorEnabled)) return;
 
   await interaction.deferReply({ ephemeral: true });
   await executeJail(async (t) => { await interaction.editReply(t); });
@@ -313,7 +313,7 @@ export async function handleCrossUnjail(interaction: ChatInputCommandInteraction
     await send(`✅ **${target.user.username}** has been unjailed. Roles restored.`);
   };
 
-  if (await slashPleaseGate(interaction, executeUnjail)) return;
+  if (await slashPleaseGate(interaction, executeUnjail, config.funBehaviorEnabled)) return;
 
   await interaction.deferReply({ ephemeral: true });
   await executeUnjail(async (t) => { await interaction.editReply(t); });
@@ -363,7 +363,7 @@ export async function handleCrossBan(interaction: ChatInputCommandInteraction, d
     await send(`✅ **${target.username}** has been banned.`);
   };
 
-  if (await slashPleaseGate(interaction, executeBan)) return;
+  if (await slashPleaseGate(interaction, executeBan, config.funBehaviorEnabled)) return;
 
   await interaction.deferReply({ ephemeral: true });
   await executeBan(async (t) => { await interaction.editReply(t); });
@@ -412,7 +412,7 @@ export async function handleCrossUnban(interaction: ChatInputCommandInteraction,
     await send(`✅ **${username}** has been unbanned.`);
   };
 
-  if (await slashPleaseGate(interaction, executeUnban)) return;
+  if (await slashPleaseGate(interaction, executeUnban, unbanConfig.funBehaviorEnabled)) return;
 
   await interaction.deferReply({ ephemeral: true });
   await executeUnban(async (t) => { await interaction.editReply(t); });
@@ -464,7 +464,7 @@ export async function handleCrossKick(interaction: ChatInputCommandInteraction, 
     await send(`✅ **${target.user.username}** has been kicked.`);
   };
 
-  if (await slashPleaseGate(interaction, executeKick)) return;
+  if (await slashPleaseGate(interaction, executeKick, kickConfig.funBehaviorEnabled)) return;
 
   await interaction.deferReply({ ephemeral: true });
   await executeKick(async (t) => { await interaction.editReply(t); });
@@ -509,7 +509,7 @@ export async function handleCrossWarn(interaction: ChatInputCommandInteraction, 
     await send(`✅ **${target.user.username}** has been warned${reason ? ` — reason: ${reason}` : ""}.`);
   };
 
-  if (await slashPleaseGate(interaction, executeWarn)) return;
+  if (await slashPleaseGate(interaction, executeWarn, warnConfig.funBehaviorEnabled)) return;
 
   await interaction.deferReply({ ephemeral: true });
   await executeWarn(async (t) => { await interaction.editReply(t); });

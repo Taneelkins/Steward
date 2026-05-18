@@ -1086,6 +1086,7 @@ export class AppDatabase {
     this.ensureColumn("guild_configs", "jail_announcements_id", "TEXT");
     this.ensureColumn("guild_configs", "promote_demote_role_ids_json", "TEXT");
     this.ensureColumn("guild_configs", "crossserver_comms_channel_id", "TEXT");
+    this.ensureColumn("guild_configs", "fun_behavior_enabled", "INTEGER NOT NULL DEFAULT 1");
   }
 
   private ensureColumn(table: string, column: string, definition: string) {
@@ -1152,6 +1153,7 @@ type GuildConfigRow = {
   crossserver_comms_channel_id: string | null;
   promote_demote_role_ids_json: string | null;
   is_secondary: number;
+  fun_behavior_enabled: number;
   created_at: string;
   updated_at: string;
 };
@@ -1334,6 +1336,7 @@ function mapGuildConfig(row: GuildConfigRow): GuildConfig {
     crossserverCommsChannelId: row.crossserver_comms_channel_id ?? null,
     promoteDemoteRoleIds: parseStringList(row.promote_demote_role_ids_json),
     isSecondary: row.is_secondary === 1,
+    funBehaviorEnabled: row.fun_behavior_enabled !== 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

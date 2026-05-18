@@ -252,6 +252,7 @@ export function configSummaryEmbed(
       { name: "Timezone", value: config.timezone, inline: true },
       { name: "Interactive Log", value: config.interactiveLogEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "CM Approval Toggle", value: config.approvalEnabled ? "Enabled" : "Disabled", inline: true },
+      { name: "Fun Behavior", value: config.funBehaviorEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "Point System", value: config.pointsEnabled ? "Enabled" : "Disabled", inline: true },
       { name: "Jr. Approval Points", value: config.juniorApprovalPointsMilli === 0 ? "Disabled" : formatPoints(config.juniorApprovalPointsMilli), inline: true },
       { name: "Quota Enabled", value: config.quotaEnabled ? "Yes" : "No", inline: true },

@@ -558,6 +558,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
   if (subcommand === "behavior") {
     const interactiveLog = interaction.options.getBoolean("interactive_log");
     const cmApproval = interaction.options.getBoolean("cm_approval");
+    const funBehavior = interaction.options.getBoolean("fun_behavior");
     const linkedServer = interaction.options.getString("linked_server");
     const moderationInvite = interaction.options.getString("moderation_invite");
     const juniorApprovalPoints = interaction.options.getNumber("junior_approval_points");
@@ -575,6 +576,7 @@ async function handleConfig(interaction: ChatInputCommandInteraction, { db }: Co
     db.updateGuildConfig(guild.id, {
       interactive_log_enabled: interactiveLog === null ? undefined : interactiveLog ? 1 : 0,
       approval_enabled: cmApproval === null ? undefined : cmApproval ? 1 : 0,
+      fun_behavior_enabled: funBehavior === null ? undefined : funBehavior ? 1 : 0,
       ...(linkedServer !== null ? { linked_guild_id: linkedServer || null } : {}),
       ...(moderationInvite !== null ? { moderation_invite: moderationInvite || null } : {}),
       ...(juniorApprovalPoints !== null ? { junior_approval_points_milli: Math.round(juniorApprovalPoints * 1000) } : {}),

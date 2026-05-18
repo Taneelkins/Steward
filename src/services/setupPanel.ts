@@ -287,6 +287,7 @@ export async function handleSetupPanelButton(db: AppDatabase, interaction: Butto
     else if (key === "cm_approval")     db.updateGuildConfig(guildId, { approval_enabled:        config.approvalEnabled       ? 0 : 1 });
     else if (key === "points")          db.updateGuildConfig(guildId, { points_enabled:           config.pointsEnabled         ? 0 : 1 });
     else if (key === "quota")           db.updateGuildConfig(guildId, { quota_enabled:            config.quotaEnabled          ? 0 : 1 });
+    else if (key === "fun_behavior")    db.updateGuildConfig(guildId, { fun_behavior_enabled:     config.funBehaviorEnabled    ? 0 : 1 });
     await writeAuditAndPost(db, interaction.guild, interaction.user.id, "config.behavior.updated", { key, via: "setup_panel" });
     await interaction.update(buildSetupPanel(db, guildId, interaction.user.id));
     return true;

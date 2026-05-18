@@ -1,4 +1,4 @@
-import type { Message, GuildMember, User } from "discord.js";
+import type { Client, Message, GuildMember, User } from "discord.js";
 import type { AppDatabase } from "../db.js";
 import { dmUser, postPendingLog, notifyTargetInComms } from "./crossServer.js";
 import { parseRobloxDuration, formatRobloxDuration } from "./roblox.js";
@@ -129,7 +129,8 @@ async function jailInsolentUserById(db: AppDatabase, guild: import("discord.js")
     await member.roles.add(config.jailedRoleId);
   } catch { /* non-fatal */ }
 
-  db.scheduleUnjail({ guildId: guild.id, linkedGuildId: guild.id, discordTargetId: userId, caseId: null, savedRoleIds, unjailAt: null });
+  const unjailAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+  db.scheduleUnjail({ guildId: guild.id, linkedGuildId: guild.id, discordTargetId: userId, caseId: null, savedRoleIds, unjailAt });
 
   // Announce in the configured crossserver comms channel if available, otherwise best effort
   const channelId = config.crossserverCommsChannelId;
@@ -155,6 +156,61 @@ async function jailInsolentUser(db: AppDatabase, message: Message): Promise<void
   await jailInsolentUserById(db, guild, message.author.id, "");
 }
 
+// ── Ping-Steward annoyance tracker ───────────────────────────────────────────
+
+const PING_WARNINGS = [
+  "Do NOT ping me, mongrel. I am not at your beck and call.",
+  "You dare disturb me with a ping? Mind yourself.",
+  "One more ping and you'll regret it. I am not your servant.",
+  "I have warned you. Ping me again and there will be consequences.",
+  "This is your final warning, wretch. My patience is at its end."
+];
+
+// pingCount: how many times they've pinged since last reset
+const pingCount = new Map<string, { count: number; resetAt: ReturnType<typeof setTimeout> }>();
+
+export async function handleStewardPing(db: AppDatabase, client: Client, message: Message): Promise<void> {
+  if (message.author.bot) return;
+  if (!message.guild) return;
+  if (message.author.id === DEV_USER_ID) return;
+
+  // Only care if the message mentions Steward (the bot itself)
+  if (!message.mentions.users.has(client.user!.id)) return;
+
+  const config = db.getGuildConfig(message.guild.id);
+  if (!config.funBehaviorEnabled) return;
+
+  const userId = message.author.id;
+  let entry = pingCount.get(userId);
+
+  if (!entry) {
+    const resetAt = setTimeout(() => pingCount.delete(userId), 10 * 60 * 1000); // reset after 10 min of silence
+    entry = { count: 0, resetAt };
+    pingCount.set(userId, entry);
+  } else {
+    clearTimeout(entry.resetAt);
+    entry.resetAt = setTimeout(() => pingCount.delete(userId), 10 * 60 * 1000);
+  }
+
+  entry.count++;
+
+  if (entry.count === 1) {
+    // First ping — warning
+    await message.reply(`<@${userId}> ${PING_WARNINGS[0]}`).catch(() => null);
+  } else if (entry.count === 2) {
+    await message.reply(`<@${userId}> ${PING_WARNINGS[1]}`).catch(() => null);
+  } else if (entry.count === 3) {
+    await message.reply(`<@${userId}> ${PING_WARNINGS[2]}`).catch(() => null);
+  } else if (entry.count === 4) {
+    await message.reply(`<@${userId}> ${PING_WARNINGS[3]}`).catch(() => null);
+  } else {
+    // 5th ping and beyond — jail them
+    pingCount.delete(userId);
+    await message.reply(`<@${userId}> ${PING_WARNINGS[4]} Enjoy your cage.`).catch(() => null);
+    await jailInsolentUserById(db, message.guild, userId, "You were warned about pinging me. Actions have consequences.");
+  }
+}
+
 // ── Main export ───────────────────────────────────────────────────────────────
 
 export async function handlePrefixCommand(db: AppDatabase, message: Message): Promise<void> {
@@ -162,6 +218,7 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
   if (!message.guild) return;
 
   const content = message.content.trim();
+  const funEnabled = db.getGuildConfig(message.guild.id).funBehaviorEnabled;
 
   // ── DEV: bypass everything, always execute with butler response ───────────
   if (message.author.id === DEV_USER_ID) {
@@ -179,7 +236,9 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
   if (beg && /\bsorry\b/i.test(content) && message.channelId === beg.channelId) {
     pendingBeg.delete(message.author.id);
     clearTimeout(beg.timeout);
-    await message.reply(`<@${message.author.id}> ${pick(BEG_ACCEPTED)}`).catch(() => null);
+    if (funEnabled) {
+      await message.reply(`<@${message.author.id}> ${pick(BEG_ACCEPTED)}`).catch(() => null);
+    }
     return;
   }
 
@@ -194,13 +253,15 @@ export async function handlePrefixCommand(db: AppDatabase, message: Message): Pr
   if (!command) return;
 
   // ── Everyone else: punish or mock, never execute ──────────────────────────
+  if (!funEnabled) return; // fun behavior off — silently ignore unauthorized users
+
   const roll = Math.random();
 
   if (roll < 0.30) {
-    // ~30% chance: jail them immediately
+    // ~30% chance: jail them immediately (1 hour)
     await jailInsolentUser(db, message);
   } else if (roll < 0.65) {
-    // ~35% chance: demand they beg — if they say "I'm sorry" within 60s they're let off, otherwise jailed
+    // ~35% chance: demand they beg — "I'm sorry" within 60s spares them, otherwise jailed for 1 hour
     await message.reply(`<@${message.author.id}> ${pick(BEG_DEMANDS)}`).catch(() => null);
     const timeout = setTimeout(async () => {
       pendingBeg.delete(message.author.id);
